@@ -4,14 +4,16 @@ import { z } from 'zod';
  * Server environment (CLAUDE.md §9). TxLINE credentials exist only here —
  * never imported into apps/web, never logged (CLAUDE.md §2.5).
  *
- * TXLINE_* and RPC_URL are optional at scaffold stage so the empty server
- * boots for CI/smoke; the feed and venue services (Day 1) fail fast without them.
+ * TXLINE_API_TOKEN and RPC_URL are optional so the server boots for CI/smoke
+ * without them; the feed and venue services fail fast when they are absent.
  */
 const envSchema = z.object({
   PORT: z.coerce.number().int().positive().default(8080),
   HOST: z.string().default('0.0.0.0'),
-  TXLINE_API_KEY: z.string().min(1).optional(),
-  TXLINE_BASE_URL: z.string().url().optional(),
+  /** API origin: https://txline-dev.txodds.com (devnet) or https://txline.txodds.com (mainnet). */
+  TXLINE_ORIGIN: z.string().url().default('https://txline-dev.txodds.com'),
+  /** Activated long-lived API token (X-Api-Token) from scripts/txline-activate.ts. */
+  TXLINE_API_TOKEN: z.string().min(1).optional(),
   JUPITER_API_KEY: z.string().min(1).optional(),
   RPC_URL: z.string().url().optional(),
   CLUSTER: z.enum(['mainnet-beta', 'devnet']).default('devnet'),

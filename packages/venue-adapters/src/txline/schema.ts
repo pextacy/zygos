@@ -2,88 +2,218 @@ import { z } from 'zod';
 import type { MarketKey, MatchEvent, OddsTick, OutcomeKey } from '@zygos/core';
 
 /**
- * PROVISIONAL TxLINE wire schema — see SCHEMA.md in this directory.
- *
- * The real shapes come with the hackathon credentials (PLAN.md T0.1). This
- * module is the ONLY place that assumes TxLINE wire formats; when real docs
- * arrive, this file and SCHEMA.md change in the same commit (CLAUDE.md §7).
- * A payload that fails validation is counted and dropped — never guessed at.
+ * REAL TxLINE wire schema, from the official docs (txline-docs.txodds.com)
+ * and the txodds/tx-on-chain reference repo. Key facts (see SCHEMA.md):
+ * - `Prices` are decimal odds ×1000 (README §trading: "decimal odds,
+ *   multiplied by 1000 to preserve a three-decimal point precision").
+ * - `Ts` is a millisecond epoch (epochDay = ts / 86_400_000 in official code).
+ * - Odds records arrive via GET /api/odds/snapshot/{fixtureId},
+ *   /api/odds/updates/{fixtureId}, and the /api/odds/stream SSE feed.
+ * - Score actions arrive via /api/scores/stream SSE.
+ * Market/outcome VOCABULARY (SuperOddsType values, PriceNames spellings) is
+ * fixture-dependent per the docs ("branch from the actual odds payload") —
+ * unknown vocabulary is skipped and reported, never guessed.
  */
 
-export const wireOddsMessageSchema = z.object({
-  packet_id: z.string().min(1),
-  ts: z.number().int().positive(), // ms epoch
-  fixture_id: z.string().min(1),
-  market: z.string().min(1),
-  bookmaker: z.string().min(1),
-  prices: z
-    .array(z.object({ outcome: z.string().min(1), odds: z.number().finite() }))
-    .min(2),
-});
+export const txOddsRecordSchema = z
+  .object({
+    FixtureId: z.number().int(),
+    MessageId: z.string().min(1),
+    Ts: z.number().int().positive(),
+    Bookmaker: z.string().min(1),
+    BookmakerId: z.number().int(),
+    SuperOddsType: z.string().min(1),
+    InRunning: z.boolean(),
+    GameState: z.string().nullish(),
+    MarketParameters: z.string().nullish(),
+    MarketPeriod: z.string().nullish(),
+    PriceNames: z.array(z.string()).default([]),
+    Prices: z.array(z.number().int()).default([]),
+    Pct: z.array(z.string()).nullish(),
+  })
+  .passthrough();
 
-export const wireEventMessageSchema = z.object({
-  packet_id: z.string().min(1),
-  ts: z.number().int().positive(),
-  fixture_id: z.string().min(1),
-  event: z.enum(['GOAL', 'RED_CARD', 'KICKOFF', 'HT', 'FT']),
-  team: z.enum(['HOME', 'AWAY']).nullable(),
-});
+export type TxOddsRecord = z.infer<typeof txOddsRecordSchema>;
 
-export type WireOddsMessage = z.infer<typeof wireOddsMessageSchema>;
-export type WireEventMessage = z.infer<typeof wireEventMessageSchema>;
+export const txFixtureSchema = z
+  .object({
+    Ts: z.number().int(),
+    StartTime: z.number().int(),
+    Competition: z.string(),
+    CompetitionId: z.number().int(),
+    FixtureGroupId: z.number().int().optional(),
+    Participant1Id: z.number().int(),
+    Participant1: z.string(),
+    Participant2Id: z.number().int(),
+    Participant2: z.string(),
+    FixtureId: z.number().int(),
+    Participant1IsHome: z.boolean(),
+  })
+  .passthrough();
 
-const OUTCOME_MAP: Record<string, OutcomeKey> = {
-  HOME: 'HOME',
-  DRAW: 'DRAW',
-  AWAY: 'AWAY',
-  OVER: 'OVER',
-  UNDER: 'UNDER',
-  '1': 'HOME',
-  X: 'DRAW',
-  '2': 'AWAY',
-};
+export type TxFixture = z.infer<typeof txFixtureSchema>;
 
-/** `1X2` → match winner; `OU_2_5` / `TOTAL_2.5` → totals. Unknown markets return null (skipped, logged upstream). */
-export function parseMarketKey(market: string): MarketKey | null {
-  if (market === '1X2' || market === 'MATCH_WINNER') return { kind: '1X2' };
-  const total = /^(?:OU|TOTAL)[_:]?(\d+)(?:[._](\d))?$/.exec(market);
-  if (total?.[1] !== undefined) {
-    const line = Number(`${total[1]}.${total[2] ?? '0'}`);
-    return { kind: 'TOTAL', line };
+/** Soccer action record from /api/scores/stream (loose: only fields we consume are validated). */
+export const txScoreRecordSchema = z
+  .object({
+    fixtureId: z.number().int(),
+    ts: z.number().int(),
+    action: z.string().nullish(),
+    gameState: z.union([z.string(), z.number()]).nullish(),
+    participant: z.number().int().nullish(),
+    confirmed: z.boolean().nullish(),
+    participant1IsHome: z.boolean().nullish(),
+    id: z.number().int().nullish(),
+    seq: z.number().int().nullish(),
+  })
+  .passthrough();
+
+export type TxScoreRecord = z.infer<typeof txScoreRecordSchema>;
+
+const FULL_TIME_PERIODS = new Set(['', 'ft', 'full', 'fulltime', 'full time', 'match', '0']);
+
+/** SuperOddsType → MarketKey. Vocabulary confirmed lazily from live payloads; unknown → null. */
+export function parseMarket(superOddsType: string, marketParameters: string | null | undefined, marketPeriod: string | null | undefined): MarketKey | null {
+  const period = (marketPeriod ?? '').trim().toLowerCase();
+  if (!FULL_TIME_PERIODS.has(period)) return null; // PRD scope: full-time markets only
+
+  const t = superOddsType.toLowerCase().replace(/[\s_-]/g, '');
+  if (['1x2', 'matchresult', 'fulltimeresult', 'ftresult', 'result', 'matchodds', 'moneyline', 'ml', 'wdw'].includes(t)) {
+    return { kind: '1X2' };
+  }
+  if (t === 'ou' || t.includes('total') || t.includes('overunder')) {
+    const line = Number.parseFloat(marketParameters ?? '');
+    if (Number.isFinite(line) && line > 0) return { kind: 'TOTAL', line };
   }
   return null;
 }
 
-/** Translate a validated wire odds message to the internal OddsTick, or null when untranslatable. */
-export function toOddsTick(msg: WireOddsMessage, receivedAt: number): OddsTick | null {
-  const market = parseMarketKey(msg.market);
-  if (market === null) return null;
+const OUTCOME_NAMES: Record<string, OutcomeKey> = {
+  '1': 'HOME',
+  home: 'HOME',
+  h: 'HOME',
+  x: 'DRAW',
+  draw: 'DRAW',
+  d: 'DRAW',
+  '2': 'AWAY',
+  away: 'AWAY',
+  a: 'AWAY',
+  over: 'OVER',
+  o: 'OVER',
+  under: 'UNDER',
+  u: 'UNDER',
+};
+
+const PRICE_SCALE_DIVISOR = 1000; // Prices are decimal odds ×1000
+
+/**
+ * Translate a validated TxLINE odds record to the internal OddsTick.
+ * Returns null (reason via second tuple slot) when vocabulary is unmapped —
+ * the caller logs it so live sessions surface new vocabulary immediately.
+ */
+export function toOddsTick(rec: TxOddsRecord, receivedAt: number): { tick: OddsTick | null; reason?: string } {
+  const market = parseMarket(rec.SuperOddsType, rec.MarketParameters, rec.MarketPeriod);
+  if (market === null) {
+    return { tick: null, reason: `unmapped market SuperOddsType=${rec.SuperOddsType} period=${rec.MarketPeriod ?? ''}` };
+  }
+  if (rec.PriceNames.length !== rec.Prices.length || rec.Prices.length < 2) {
+    return { tick: null, reason: `price arrays mismatched (${rec.PriceNames.length} names / ${rec.Prices.length} prices)` };
+  }
 
   const outcomes: OddsTick['outcomes'] = [];
-  for (const p of msg.prices) {
-    const outcome = OUTCOME_MAP[p.outcome.toUpperCase()];
-    if (outcome === undefined) return null;
-    outcomes.push({ outcome, decimalOdds: p.odds });
+  for (let i = 0; i < rec.PriceNames.length; i++) {
+    const name = (rec.PriceNames[i] as string).trim().toLowerCase();
+    const outcome = OUTCOME_NAMES[name];
+    if (outcome === undefined) {
+      return { tick: null, reason: `unmapped outcome name "${rec.PriceNames[i]}" in ${rec.SuperOddsType}` };
+    }
+    const raw = rec.Prices[i] as number;
+    if (raw <= PRICE_SCALE_DIVISOR) {
+      return { tick: null, reason: `non-positive-edge price ${raw} for ${rec.PriceNames[i]}` };
+    }
+    outcomes.push({ outcome, decimalOdds: raw / PRICE_SCALE_DIVISOR });
   }
 
   return {
-    packetId: msg.packet_id,
-    receivedAt,
-    sourceTs: msg.ts,
-    fixtureId: msg.fixture_id,
-    market,
-    bookmakerId: msg.bookmaker,
-    outcomes,
+    tick: {
+      packetId: rec.MessageId,
+      receivedAt,
+      sourceTs: rec.Ts,
+      fixtureId: String(rec.FixtureId),
+      market,
+      bookmakerId: rec.Bookmaker,
+      outcomes,
+    },
   };
 }
 
-export function toMatchEvent(msg: WireEventMessage): MatchEvent {
+/** Soccer game-phase vocabulary (docs scores/soccer-feed): name and numeric id forms. */
+const PHASE_BY_TOKEN: Record<string, string> = {
+  ns: 'NS',
+  '1': 'NS',
+  h1: 'H1',
+  '2': 'H1',
+  ht: 'HT',
+  '3': 'HT',
+  h2: 'H2',
+  '4': 'H2',
+  f: 'F',
+  '5': 'F',
+  fet: 'F',
+  '10': 'F',
+  fpe: 'F',
+  '13': 'F',
+};
+
+export function normalizePhase(gameState: string | number | null | undefined): string | null {
+  if (gameState === null || gameState === undefined) return null;
+  return PHASE_BY_TOKEN[String(gameState).trim().toLowerCase()] ?? null;
+}
+
+function eventTeam(rec: TxScoreRecord): 'HOME' | 'AWAY' | null {
+  if (rec.participant !== 1 && rec.participant !== 2) return null;
+  const p1Home = rec.participant1IsHome ?? true;
+  return (rec.participant === 1) === p1Home ? 'HOME' : 'AWAY';
+}
+
+/**
+ * Action-based events from a score record (GOAL / RED_CARD). Phase-transition
+ * events (KICKOFF/HT/FT) are derived statefully by the adapter, which knows
+ * the previous phase per fixture.
+ */
+export function toActionEvent(rec: TxScoreRecord): MatchEvent | null {
+  if (rec.confirmed === false) return null; // VAR-pending or unconfirmed actions never fire rules
+  const action = (rec.action ?? '').toLowerCase();
+  if (!action) return null;
+
+  let type: MatchEvent['type'] | null = null;
+  if (action.includes('goal') && !/disallow|cancel|no goal|miss/.test(action)) type = 'GOAL';
+  else if (action.includes('red') && action.includes('card')) type = 'RED_CARD';
+  if (type === null) return null;
+
   return {
-    packetId: msg.packet_id,
-    sourceTs: msg.ts,
-    fixtureId: msg.fixture_id,
-    type: msg.event,
-    team: msg.team,
+    packetId: `${rec.fixtureId}:${rec.id ?? rec.seq ?? rec.ts}`,
+    sourceTs: rec.ts,
+    fixtureId: String(rec.fixtureId),
+    type,
+    team: eventTeam(rec),
+    inferred: false,
+  };
+}
+
+export function phaseTransitionEvent(rec: TxScoreRecord, prevPhase: string | null, newPhase: string): MatchEvent | null {
+  if (prevPhase === newPhase) return null;
+  let type: MatchEvent['type'] | null = null;
+  if (newPhase === 'H1' && (prevPhase === 'NS' || prevPhase === null)) type = 'KICKOFF';
+  else if (newPhase === 'HT') type = 'HT';
+  else if (newPhase === 'F') type = 'FT';
+  if (type === null) return null;
+  return {
+    packetId: `${rec.fixtureId}:phase:${newPhase}:${rec.ts}`,
+    sourceTs: rec.ts,
+    fixtureId: String(rec.fixtureId),
+    type,
+    team: null,
     inferred: false,
   };
 }

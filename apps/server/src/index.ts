@@ -23,18 +23,18 @@ const db = openDb(env.DATABASE_URL);
  * says so explicitly. There is no simulated fallback.
  */
 let feed: FeedService | null = null;
-if (env.TXLINE_API_KEY && env.TXLINE_BASE_URL) {
+if (env.TXLINE_API_TOKEN) {
   const adapter = new TxLineAdapter({
-    apiKey: env.TXLINE_API_KEY,
-    baseUrl: env.TXLINE_BASE_URL,
+    origin: env.TXLINE_ORIGIN,
+    apiToken: env.TXLINE_API_TOKEN,
     onRawPacket: (raw) => feed?.auditRaw(raw),
-    onParseError: (e) => app.log.warn({ fixtureId: e.fixtureId, reason: e.reason }, 'txline parse/poll issue'),
+    onParseError: (e) => app.log.warn({ fixtureId: e.fixtureId, reason: e.reason }, 'txline parse/stream issue'),
   });
   feed = new FeedService(adapter, db, app.log);
   await adapter.connect();
-  app.log.info({ baseUrl: env.TXLINE_BASE_URL }, 'txline feed connected');
+  app.log.info({ origin: env.TXLINE_ORIGIN }, 'txline feed connected');
 } else {
-  app.log.warn('TXLINE_API_KEY / TXLINE_BASE_URL not set — feed disabled, no odds will be served');
+  app.log.warn('TXLINE_API_TOKEN not set — feed disabled, no odds will be served. Run: pnpm -F server txline:activate');
 }
 
 app.get('/healthz', async () => {
@@ -42,7 +42,7 @@ app.get('/healthz', async () => {
     status: feed ? 'ok' : 'feed-not-configured',
     feed: feed ? { ...feed.health(), states: feed.feedStates() } : { connected: false, lastTickAgeMs: {} },
     rpc: { configured: env.RPC_URL !== undefined, cluster: env.CLUSTER },
-    txline: { configured: env.TXLINE_API_KEY !== undefined },
+    txline: { configured: env.TXLINE_API_TOKEN !== undefined, origin: env.TXLINE_ORIGIN },
     db: { configured: true, url: env.DATABASE_URL },
   };
 });

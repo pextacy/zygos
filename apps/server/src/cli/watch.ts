@@ -14,13 +14,13 @@ import { FeedService, type FeedLogger } from '../feed.js';
 
 const fixtureId = process.argv[2];
 if (!fixtureId) {
-  console.error('usage: pnpm -F server cli:watch <fixtureId>');
+  console.error('usage: pnpm -F server cli:watch <fixtureId> | list [competitionId]');
   process.exit(2);
 }
 
 const env = loadEnv();
-if (!env.TXLINE_API_KEY || !env.TXLINE_BASE_URL) {
-  console.error('TXLINE_API_KEY / TXLINE_BASE_URL not set. Obtain hackathon credentials (PLAN.md T0.1) — no offline mode exists.');
+if (!env.TXLINE_API_TOKEN) {
+  console.error('TXLINE_API_TOKEN not set. Run `pnpm -F server txline:activate` first (needs devnet SOL + unblocked network) — no offline mode exists.');
   process.exit(2);
 }
 
@@ -32,12 +32,22 @@ const log: FeedLogger = {
 
 const db = openDb(env.DATABASE_URL);
 const adapter = new TxLineAdapter({
-  apiKey: env.TXLINE_API_KEY,
-  baseUrl: env.TXLINE_BASE_URL,
+  origin: env.TXLINE_ORIGIN,
+  apiToken: env.TXLINE_API_TOKEN,
   onRawPacket: (raw) => feedService.auditRaw(raw),
-  onParseError: (e) => console.warn(`[poll] ${e.fixtureId}: ${e.reason}`),
+  onParseError: (e) => console.warn(`[stream] ${e.fixtureId}: ${e.reason}`),
 });
 const feedService = new FeedService(adapter, db, log);
+
+if (fixtureId === 'list') {
+  await adapter.connect();
+  const competitionId = process.argv[3] ? Number(process.argv[3]) : undefined;
+  const fixtures = await adapter.listFixtures(competitionId !== undefined ? { competitionId } : undefined);
+  for (const fx of fixtures) {
+    console.log(`${fx.FixtureId}  ${new Date(fx.StartTime).toISOString()}  [${fx.CompetitionId}] ${fx.Competition}: ${fx.Participant1} vs ${fx.Participant2}`);
+  }
+  process.exit(0);
+}
 
 function fmt(snap: ConsensusSnapshot): string {
   const probs = Object.entries(snap.probs)
@@ -56,7 +66,7 @@ feedService.addListener({
 
 await adapter.connect();
 await feedService.subscribe([fixtureId]);
-console.log(`watching ${fixtureId} via ${env.TXLINE_BASE_URL} — Ctrl-C to stop`);
+console.log(`watching ${fixtureId} via ${env.TXLINE_ORIGIN} — Ctrl-C to stop`);
 
 setInterval(() => {
   const states = feedService.feedStates();

@@ -88,8 +88,10 @@ pnpm audit:nomock            # greps runtime code for mock/faker/fixture — mus
 ## 9. Environment variables (server only)
 
 ```
-TXLINE_API_KEY=        # from TxLINE hackathon Telegram channel
-TXLINE_BASE_URL=       # per TxLINE docs
+TXLINE_ORIGIN=         # https://txline-dev.txodds.com (devnet) | https://txline.txodds.com (mainnet)
+TXLINE_API_TOKEN=      # activated via `pnpm -F server txline:activate` (on-chain free-tier subscription;
+                       # guest JWT is fetched at runtime — see packages/venue-adapters/src/txline/SCHEMA.md)
+JUPITER_API_KEY=       # Jupiter Predict API (candidate venue, docs/venue-selection.md)
 RPC_URL=               # Helius/Triton mainnet or devnet endpoint
 CLUSTER=               # 'mainnet-beta' | 'devnet' — must match venue adapter deployment
 DATABASE_URL=          # SQLite file path, default ./data/zygos.db
