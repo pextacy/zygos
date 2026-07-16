@@ -1,0 +1,92 @@
+import type { ActivityEntry, ConsensusFrame, FeedState, MatchEventDto, RuleFiredFrame, ValuedPositionDto } from './types';
+
+/** Terminal state, reduced from server frames (client-only, in-memory — no browser storage, FR-41). */
+export interface TerminalState {
+  connected: boolean;
+  consensus: Map<string, ConsensusFrame>; // `${fixtureId}|${market}`
+  feedStates: Map<string, FeedState>; // fixtureId
+  positions: Map<string, ValuedPositionDto>; // positionRef
+  events: MatchEventDto[];
+  activity: ActivityEntry[];
+  pendingRuleFire: RuleFiredFrame | null;
+  subscribedFixtures: string[];
+}
+
+export const initialState: TerminalState = {
+  connected: false,
+  consensus: new Map(),
+  feedStates: new Map(),
+  positions: new Map(),
+  events: [],
+  activity: [],
+  pendingRuleFire: null,
+  subscribedFixtures: [],
+};
+
+export type Action =
+  | { type: 'socket'; connected: boolean }
+  | { type: 'consensus'; frame: ConsensusFrame }
+  | { type: 'feedHealth'; fixtureId: string; state: FeedState }
+  | { type: 'valuation'; dto: ValuedPositionDto }
+  | { type: 'positions'; list: ValuedPositionDto[] }
+  | { type: 'event'; event: MatchEventDto }
+  | { type: 'ruleFired'; frame: RuleFiredFrame }
+  | { type: 'dismissRuleFire' }
+  | { type: 'subscribed'; fixtureIds: string[] }
+  | { type: 'log'; kind: ActivityEntry['kind']; text: string };
+
+let logSeq = 0;
+
+export function reducer(state: TerminalState, action: Action): TerminalState {
+  switch (action.type) {
+    case 'socket':
+      return { ...state, connected: action.connected };
+    case 'consensus': {
+      const consensus = new Map(state.consensus);
+      consensus.set(`${action.frame.fixtureId}|${action.frame.market}`, action.frame);
+      return { ...state, consensus };
+    }
+    case 'feedHealth': {
+      const previous = state.feedStates.get(action.fixtureId);
+      const feedStates = new Map(state.feedStates);
+      feedStates.set(action.fixtureId, action.state);
+      const next = { ...state, feedStates };
+      if (previous !== action.state && action.state !== 'LIVE') {
+        return reducer(next, { type: 'log', kind: 'feed', text: `feed ${action.state} for fixture ${action.fixtureId}` });
+      }
+      return next;
+    }
+    case 'valuation': {
+      const positions = new Map(state.positions);
+      positions.set(action.dto.position.positionRef, action.dto);
+      return { ...state, positions };
+    }
+    case 'positions': {
+      const positions = new Map<string, ValuedPositionDto>();
+      for (const dto of action.list) positions.set(dto.position.positionRef, dto);
+      return { ...state, positions };
+    }
+    case 'event': {
+      const events = [action.event, ...state.events].slice(0, 50);
+      const team = action.event.team ? ` (${action.event.team})` : '';
+      const tag = action.event.inferred ? ' ⚡ inferred from odds move' : '';
+      return reducer({ ...state, events }, { type: 'log', kind: 'event', text: `${action.event.type}${team} in ${action.event.fixtureId}${tag}` });
+    }
+    case 'ruleFired':
+      return reducer(
+        { ...state, pendingRuleFire: action.frame },
+        { type: 'log', kind: 'rule', text: `rule ${action.frame.template} fired (${action.frame.latencyMs}ms after event, packet ${action.frame.event.packetId})` },
+      );
+    case 'dismissRuleFire':
+      return { ...state, pendingRuleFire: null };
+    case 'subscribed':
+      return { ...state, subscribedFixtures: [...new Set([...state.subscribedFixtures, ...action.fixtureIds])] };
+    case 'log':
+      return {
+        ...state,
+        activity: [{ id: `a${logSeq++}`, ts: Date.now(), kind: action.kind, text: action.text }, ...state.activity].slice(0, 100),
+      };
+    default:
+      return state;
+  }
+}
