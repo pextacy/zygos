@@ -1,0 +1,30 @@
+{
+  "name": "zygos",
+  "private": true,
+  "version": "0.0.1",
+  "description": "Non-custodial real-time cash-out and hedging terminal for Solana prediction markets, priced by TxODDS TxLINE consensus odds.",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "pnpm -r --parallel --if-present run dev",
+    "build": "pnpm -r --if-present run build",
+    "typecheck": "pnpm -r --if-present run typecheck",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "audit:nomock": "sh scripts/audit-nomock.sh"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "esbuild"
+    ]
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.7.0",
+    "eslint": "^9.7.0",
+    "typescript": "^5.5.0",
+    "typescript-eslint": "^8.0.0",
+    "vitest": "^3.2.0"
+  }
+}

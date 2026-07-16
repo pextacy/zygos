@@ -1,0 +1,25 @@
+# dependencies
+node_modules/
+
+# builds
+dist/
+.next/
+*.tsbuildinfo
+
+# environment & secrets — never commit (CLAUDE.md §2.5, §8)
+.env
+.env.*
+!.env.example
+*.keypair.json
+
+# local data
+data/
+*.db
+*.db-journal
+
+# session logs may contain credentials (CLAUDE.md §8)
+docs/session-logs/
+
+# misc
+.DS_Store
+coverage/
