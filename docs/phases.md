@@ -139,7 +139,7 @@ DOCS §7, PRD §7 business model):**
 - [ ] Security review of the stored pre-signed tx path (threat: DB leak ⇒ early submission of the pre-agreed lock only — document and bound).
 - [ ] Second venue adapter passing the same integration suite.
 
-**Status:** 🟡 delegated-execution core implemented and tested (see status log); on-chain E2E and second venue pending the same externals as G1–G3.
+**Status:** 🟡 delegated-execution core implemented and tested; security review done (`security-review-delegation.md` — verdict: acceptable with 3 pre-mainnet requirements). Second venue adapter deliberately deferred to the liquidity-gate outcome (venue-selection.md — unverifiable SDK guesswork rejected). On-chain E2E pending the same externals as G1–G3.
 
 ---
 

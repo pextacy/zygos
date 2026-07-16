@@ -67,6 +67,15 @@ For Jupiter Predict and Drift BET, on 2–3 live World Cup 1X2/match markets:
 _Pending the liquidity gate. Current lean: Jupiter Predict if positions prove
 RPC-readable on Solana; otherwise Drift BET if it lists World Cup markets._
 
+**API docs located (Jul 16, late):** Jupiter's live reference is at
+[prediction-market-api.jup.ag/docs](https://prediction-market-api.jup.ag/docs) —
+use it to verify the provisional response shapes in `jupiter/schema.ts` during
+the liquidity gate. Drift BET confirmed as binary YES/NO markets (price 0–1)
+on Drift's perp infrastructure via `@drift-labs/sdk` + read-only Data API;
+a Drift adapter is deliberately deferred until the gate picks it — the SDK
+surface can't be verified without live calls, and guessed integration code is
+worse than none (PLAN §0: prefer deleting scope).
+
 **Implementation head start:** `JupiterPredictAdapter` is already implemented
 in `packages/venue-adapters/src/jupiter/` against the documented API
 (`api.jup.ag/prediction/v1`, `x-api-key` auth, micro-USD amounts, unsigned-tx
