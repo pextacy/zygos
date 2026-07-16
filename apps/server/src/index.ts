@@ -1,9 +1,10 @@
 import Fastify from 'fastify';
 import { marketKeyString } from '@zygos/core';
-import { TxLineAdapter } from '@zygos/venue-adapters';
+import { JupiterPredictAdapter, TxLineAdapter } from '@zygos/venue-adapters';
 import { openDb } from './db.js';
 import { loadEnv } from './env.js';
 import { FeedService } from './feed.js';
+import { ValuationService } from './valuation.js';
 import { attachWs } from './ws.js';
 
 const env = loadEnv();
@@ -35,6 +36,20 @@ if (env.TXLINE_API_TOKEN) {
   app.log.info({ origin: env.TXLINE_ORIGIN }, 'txline feed connected');
 } else {
   app.log.warn('TXLINE_API_TOKEN not set — feed disabled, no odds will be served. Run: pnpm -F server txline:activate');
+}
+
+/**
+ * Venue adapter + valuation (T1.5/T1.6). Market bindings (TxLINE fixture ↔
+ * Jupiter market) start empty and are populated by the fixture matcher during
+ * the Day-1 liquidity gate; unmapped positions surface as UNMAPPED_OUTCOME.
+ */
+let valuation: ValuationService | null = null;
+if (feed && env.JUPITER_API_KEY) {
+  const venue = new JupiterPredictAdapter({ apiKey: env.JUPITER_API_KEY });
+  valuation = new ValuationService(venue, feed, app.log);
+  app.log.info({ venue: venue.venueId }, 'venue adapter configured');
+} else if (feed) {
+  app.log.warn('JUPITER_API_KEY not set — positions cannot be read or valued');
 }
 
 app.get('/healthz', async () => {
@@ -72,6 +87,18 @@ app.get('/fixtures', async (_req, reply) => {
   };
 });
 
+app.get<{ Params: { wallet: string } }>('/positions/:wallet', async (req, reply) => {
+  if (!feed) return reply.code(503).send({ error: 'feed not configured' });
+  if (!valuation) return reply.code(503).send({ error: 'no venue adapter configured — set JUPITER_API_KEY' });
+  const wallet = req.params.wallet;
+  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(wallet)) {
+    return reply.code(400).send({ error: 'not a base58 Solana address' });
+  }
+  await valuation.refreshPositions(wallet);
+  const now = Date.now();
+  return { wallet, positions: valuation.valueWallet(wallet, feed.snapshots(now), now) };
+});
+
 const subscribeBody = { type: 'object', required: ['fixtureIds'], properties: { fixtureIds: { type: 'array', items: { type: 'string' }, maxItems: 50 } } } as const;
 app.post<{ Body: { fixtureIds: string[] } }>('/fixtures/subscribe', { schema: { body: subscribeBody } }, async (req, reply) => {
   if (!feed) {
@@ -83,7 +110,7 @@ app.post<{ Body: { fixtureIds: string[] } }>('/fixtures/subscribe', { schema: { 
 
 await app.ready();
 if (feed) {
-  attachWs(app.server, feed, app.log);
+  attachWs(app.server, feed, valuation, app.log);
 }
 
 app

@@ -12,7 +12,7 @@ Update the status line of each phase as work progresses. When resuming a session
 | Phase | Window | Theme | Gate | Status |
 |-------|--------|-------|------|--------|
 | 0 — Access & Foundations | Jul 16 (evening) | Credentials, scaffold, venue shortlist | G0 | 🟡 Code done — non-code items (credentials, infra, shortlist, registration) pending |
-| 1 — Data Spine & Positions | Jul 17 | Real odds in, real positions valued | G1 | 🟡 All code done incl. real TxLINE protocol + activation script; blocked on devnet SOL (faucet 429) + unfiltered network (ISP blocks *.txodds.com) |
+| 1 — Data Spine & Positions | Jul 17 | Real odds in, real positions valued | G1 | 🟡 ALL Phase-1 code complete (incl. T1.6 valuation service). Gate demos blocked on: devnet SOL (faucet 429/captcha), unfiltered network for *.txodds.com, live match window (Jul 17–18), team-wallet position |
 | 2 — Hedge Engine & UI | Jul 18 | One-click lock on-chain, product UI, rules v1 | G2 | 🔲 Not started |
 | 3 — Polish & Submission | Jul 19 | Fixes, video, submit | G3 | 🔲 Not started |
 

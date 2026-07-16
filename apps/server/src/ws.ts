@@ -5,12 +5,12 @@ import type { ConsensusSnapshot, MatchEvent } from '@zygos/core';
 import { marketKeyString } from '@zygos/core';
 import type { FastifyBaseLogger } from 'fastify';
 import type { FeedService } from './feed.js';
+import type { ValuationListener, ValuationService } from './valuation.js';
 
 /**
  * WS fanout (DOCS.md §8). Outbound frames: HELLO, CONSENSUS, EVENT,
- * FEED_HEALTH. VALUATION frames join once a venue adapter is selected and
- * wired (PLAN.md T1.4/T1.5 — venue liquidity gate pending); no synthetic
- * valuations are ever emitted.
+ * FEED_HEALTH, and VALUATION for wallets subscribed while a venue adapter is
+ * configured. No synthetic valuations are ever emitted.
  */
 
 const subscribeFrameSchema = z.object({
@@ -21,7 +21,7 @@ const subscribeFrameSchema = z.object({
 
 const HEALTH_INTERVAL_MS = 5_000;
 
-export function attachWs(server: Server, feed: FeedService, log: FastifyBaseLogger): WebSocketServer {
+export function attachWs(server: Server, feed: FeedService, valuation: ValuationService | null, log: FastifyBaseLogger): WebSocketServer {
   const wss = new WebSocketServer({ server, path: '/ws' });
 
   const broadcast = (frame: object): void => {
@@ -56,6 +56,12 @@ export function attachWs(server: Server, feed: FeedService, log: FastifyBaseLogg
 
   wss.on('connection', (socket) => {
     socket.send(JSON.stringify({ type: 'HELLO', serverTime: Date.now() }));
+    const valuationListeners: ValuationListener[] = [];
+
+    socket.on('close', () => {
+      for (const l of valuationListeners) valuation?.removeListener(l);
+      valuationListeners.length = 0;
+    });
 
     socket.on('message', (data) => {
       let json: unknown;
@@ -72,7 +78,23 @@ export function attachWs(server: Server, feed: FeedService, log: FastifyBaseLogg
       }
       feed
         .subscribe(frame.data.fixtureIds)
-        .then(() => socket.send(JSON.stringify({ type: 'SUBSCRIBED', fixtureIds: frame.data.fixtureIds })))
+        .then(() => {
+          if (frame.data.wallet !== undefined) {
+            if (valuation === null) {
+              socket.send(JSON.stringify({ type: 'ERROR', code: 'NO_VENUE_ADAPTER', detail: 'no venue configured — positions cannot be valued' }));
+            } else {
+              const listener: ValuationListener = {
+                wallet: frame.data.wallet,
+                onValuation: (v) => {
+                  if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify({ type: 'VALUATION', ...v }));
+                },
+              };
+              valuationListeners.push(listener);
+              valuation.addListener(listener);
+            }
+          }
+          socket.send(JSON.stringify({ type: 'SUBSCRIBED', fixtureIds: frame.data.fixtureIds }));
+        })
         .catch((err: unknown) => {
           log.error({ err }, 'ws subscribe failed');
           socket.send(JSON.stringify({ type: 'ERROR', code: 'SUBSCRIBE_FAILED' }));
