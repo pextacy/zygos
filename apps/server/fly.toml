@@ -1,0 +1,34 @@
+# Fly.io config (DOCS.md §10): single machine in fra, SQLite on a volume.
+# Deploy (after `fly auth login`):
+#   fly launch --no-deploy --copy-config --name zygos-server   # first time
+#   fly volumes create zygos_data --region fra --size 1        # first time
+#   fly secrets set TXLINE_ORIGIN=... TXLINE_API_TOKEN=... JUPITER_API_KEY=... RPC_URL=... CLUSTER=devnet
+#   fly deploy --dockerfile Dockerfile --build-context ../..
+app = "zygos-server"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "8080"
+  DATABASE_URL = "/data/zygos.db"
+  COMMITMENT_MEMO = "true"
+
+[mounts]
+  source = "zygos_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false   # WS fanout + feed must stay up during matches
+  auto_start_machines = true
+  min_machines_running = 1
+
+[checks.healthz]
+  type = "http"
+  port = 8080
+  path = "/healthz"
+  interval = "30s"
+  timeout = "5s"
