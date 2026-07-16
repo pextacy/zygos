@@ -23,20 +23,27 @@ export function Terminal() {
   const [lockTarget, setLockTarget] = useState<{ dto: ValuedPositionDto; prefill?: { fraction: number; preview: HedgePreviewDto } } | null>(null);
   const [ruleTarget, setRuleTarget] = useState<ValuedPositionDto | null>(null);
   const [disclaimerAck, setDisclaimerAck] = useState(false);
+  const [loadingPositions, setLoadingPositions] = useState(false);
 
   useZygosSocket(dispatch, wallet, watched);
 
-  // Initial position load over HTTP; live updates then flow via VALUATION frames.
-  useEffect(() => {
+  // Initial + on-demand position load over HTTP; live updates then flow via VALUATION frames.
+  const refreshPositions = useCallback(() => {
     if (!wallet) return;
+    setLoadingPositions(true);
     api<{ positions: ValuedPositionDto[] }>(`/positions/${wallet}`)
       .then(({ positions }) => {
         dispatch({ type: 'positions', list: positions });
         const fixtures = [...new Set(positions.map((p) => p.position.fixtureId).filter((f) => !f.startsWith('unmapped:')))];
         if (fixtures.length > 0) setWatched((w) => [...new Set([...w, ...fixtures])]);
       })
-      .catch((err: Error) => dispatch({ type: 'log', kind: 'error', text: `positions: ${err.message}` }));
+      .catch((err: Error) => dispatch({ type: 'log', kind: 'error', text: `positions: ${err.message}` }))
+      .finally(() => setLoadingPositions(false));
   }, [wallet]);
+
+  useEffect(() => {
+    refreshPositions();
+  }, [refreshPositions]);
 
   const onWatch = useCallback((fixtureId: string) => setWatched((w) => [...new Set([...w, fixtureId])]), []);
   const onLog = useCallback((kind: 'lock' | 'rule' | 'error' | 'info', text: string) => dispatch({ type: 'log', kind, text }), []);
@@ -60,12 +67,14 @@ export function Terminal() {
         </div>
       </header>
 
-      <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 p-3 lg:grid-cols-[1fr_1.4fr_1fr]">
+      <main className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto p-3 lg:grid-cols-[1fr_1.4fr_1fr] lg:overflow-hidden">
         <MatchBoard consensus={state.consensus} feedStates={state.feedStates} events={state.events} onWatch={onWatch} />
         <PositionsTable
           positions={positions}
           feedStates={state.feedStates}
           walletConnected={wallet !== null}
+          loading={loadingPositions}
+          onRefresh={refreshPositions}
           onLockIn={(dto) => setLockTarget({ dto })}
           onArmRule={(dto) => setRuleTarget(dto)}
         />
@@ -83,7 +92,15 @@ export function Terminal() {
       )}
 
       {lockTarget && (
-        <LockInModal dto={lockTarget.dto} prefill={lockTarget.prefill} onClose={() => setLockTarget(null)} onLog={onLog} />
+        <LockInModal
+          dto={lockTarget.dto}
+          prefill={lockTarget.prefill}
+          onClose={(locked) => {
+            setLockTarget(null);
+            if (locked) refreshPositions(); // table must reflect the shrunk/closed position immediately
+          }}
+          onLog={onLog}
+        />
       )}
       {ruleTarget && <RuleArmModal dto={ruleTarget} onClose={() => setRuleTarget(null)} onLog={onLog} />}
       {ruleFire && (

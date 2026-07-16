@@ -22,7 +22,7 @@ export function LockInModal({
 }: {
   dto: ValuedPositionDto;
   prefill?: { fraction: number; preview: HedgePreviewDto };
-  onClose: () => void;
+  onClose: (locked?: boolean) => void;
   onLog: (kind: 'lock' | 'error' | 'info', text: string) => void;
 }) {
   const { publicKey, sendTransaction, signMessage } = useWallet();
@@ -99,7 +99,7 @@ export function LockInModal({
         const memoSig = await sendTransaction(deserializeTx(confirm.memoTxBase64), connection);
         onLog('lock', `commitment memo written: ${memoSig}`);
       }
-      onClose();
+      onClose(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       onLog('error', `lock failed: ${err instanceof Error ? err.message : String(err)}`);
@@ -111,13 +111,13 @@ export function LockInModal({
   const plan = preview?.plan ?? null;
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 p-4" onClick={() => onClose()}>
       <div className="w-full max-w-md rounded border border-terminal-border bg-terminal-panel p-4" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between">
           <h3 className="text-xs uppercase tracking-widest text-terminal-dim">
             Lock In — {dto.position.fixtureId} · {dto.position.outcome}
           </h3>
-          <button onClick={onClose} className="text-terminal-dim hover:text-terminal-text">✕</button>
+          <button onClick={() => onClose()} className="text-terminal-dim hover:text-terminal-text">✕</button>
         </div>
 
         <label className="mt-3 block text-xs text-terminal-dim">

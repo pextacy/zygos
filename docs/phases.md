@@ -14,7 +14,7 @@ Update the status line of each phase as work progresses. When resuming a session
 | 0 — Access & Foundations | Jul 16 (evening) | Credentials, scaffold, venue shortlist | G0 | 🟡 Code done — non-code items (credentials, infra, shortlist, registration) pending |
 | 1 — Data Spine & Positions | Jul 17 | Real odds in, real positions valued | G1 | 🟡 ALL Phase-1 code complete (incl. T1.6 valuation service). Gate demos blocked on: devnet SOL (faucet 429/captcha), unfiltered network for *.txodds.com, live match window (Jul 17–18), team-wallet position |
 | 2 — Hedge Engine & UI | Jul 18 | One-click lock on-chain, product UI, rules v1 | G2 | 🟡 ALL Phase-2 code complete (hedge math+pipeline, rules v1, full terminal UI, Dockerfile). Gate demos blocked on same externals as G1 + deploy accounts (no vercel/fly CLI auth) |
-| 3 — Polish & Submission | Jul 19 | Fixes, video, submit | G3 | 🔲 Not started |
+| 3 — Polish & Submission | Jul 19 | Fixes, video, submit | G3 | 🟡 All writable deliverables done (README, submission text, video script, polish, no-mock audit). Pending: live-evidence criteria (video recording, live G1/G2 proof) + the Earn submission click |
 
 Phases are strictly gated: **do not start phase N+1 work before gate GN passes or its fallback is executed.** Under time pressure, cut scope per PLAN.md §5 — never cut the gate checks themselves.
 
@@ -129,6 +129,7 @@ From PLAN.md §5 and CLAUDE.md §2:
 
 ## Status log
 
+- 2026-07-16 (late night) — **Phase 3 writable deliverables complete two days ahead of schedule:** README finalized (T3.4: quickstart, architecture diagram, TxLINE integration, security posture, honest limitations), Superteam Earn submission text drafted leading with the judging-alignment table (T3.6 — three TODO links to fill: app/repo/video), shot-by-shot demo video script mapped to runbook captures (T3.5 writing), UI polish + demo-path bug triage (T3.1/T3.2: post-lock client position refresh — real bug fixed; loading/refresh states; mobile overflow). No-mock audit green (T3.3). **G3 remaining:** the six release criteria's live-evidence items (video recording, live-data proof of G1/G2) and the physical submission — all downstream of the same externals as G1/G2.
 - 2026-07-16 (night) — **Phase 2 code complete ahead of schedule** (commits `3bf83e6`, `99b5bea`+): hedge engine with fast-check property tests (payout outcome-independence, route optimality), odds-discontinuity event inference wired into the feed, /hedge/preview + /hedge/confirm with mandatory simulation and Memo commitments, rule engine v1 (GOAL_LOCK, RED_CARD_REDUCE) with intent hashes and wallet-routed RULE_FIRED frames, signed-message auth, and the full terminal UI (216 kB first load): match board, positions with fair/lag/P&L, lock-in slider + payout matrix + edge-vs-fair line, explainer panel, TxLINE badges, STALE lockout, rule arming, full-screen fire overlay. 68/68 tests green. **G2 items still requiring externals:** T2.3 real on-chain lock (wallet+funds+venue key), T2.9 live-match demo capture (Jul 17–18 match + unblocked network), T2.10 production deploy (no authenticated vercel/flyctl on this machine; server Dockerfile ready).
 
 Append one line per gate decision (date, gate, result, fallback taken if any):

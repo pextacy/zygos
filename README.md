@@ -1,51 +1,141 @@
-# Zygos
+# Zygos — ζυγός, "the scale"
 
-Non-custodial, real-time cash-out and hedging terminal for Solana prediction markets.
-Fair values come from the TxODDS **TxLINE** live odds feed (de-vigged multi-bookmaker
-consensus) — not from laggy on-chain marks. Built for the TxODDS World Cup Hackathon,
-Trading Tools & Agents track.
+**Real-time cash-out and hedging terminal for Solana prediction markets, priced
+by TxODDS TxLINE consensus odds.**
 
-> **Status:** Phase 0 scaffold. See `docs/phases.md` for phase gates and
-> `docs/PLAN.md` for the day-by-day build plan.
+In-play "cash out" is the single most-used feature of traditional sportsbooks.
+On-chain prediction markets don't have it: mid-match, the on-chain price lags
+real events by tens of seconds, and exiting requires manual hedge math under
+time pressure. Zygos values every position against TxLINE's de-vigged
+multi-bookmaker consensus — the fair price — and compresses the exit to one
+signed transaction, telling you plainly whether the lock fills **above or
+below fair value and by how many probability points**.
 
-## Documentation
+Built for the TxODDS World Cup Hackathon (Trading Tools & Agents track).
+Non-custodial, no mock data anywhere in the runtime, every price traceable to
+its TxLINE source packets.
 
-| File | Contents |
-|------|----------|
-| `docs/PRD.md` | Product requirements — what and why |
-| `docs/DOCS.md` | Technical design — architecture, math, APIs |
-| `docs/PLAN.md` | Build schedule with hard gates |
-| `docs/phases.md` | Phase-level status tracking |
-| `docs/CLAUDE.md` | Repository rules for AI-assisted development |
+> **Status:** all software complete and behavior-proven (72 tests incl. an
+> end-to-end pipeline integration and fast-check property tests). Live-fire
+> and deployment steps: `docs/runbook-matchday.md`. Phase tracking:
+> `docs/phases.md`.
 
-## Layout
-
-```
-apps/web/               Next.js 14 terminal UI (wallet, signing) — UI only
-apps/server/            Fastify: TxLINE ingest, consensus, valuation WS, tx building
-packages/core/          Pure TS financial math — de-vig, hedge sizing, types. No I/O.
-packages/venue-adapters/ OddsFeedAdapter + VenueAdapter contracts; TxLINE + venue impls
-```
-
-Dependency direction: `web → server (HTTP/WS only)`, `server → core + venue-adapters`,
-`core → nothing` — enforced by ESLint.
-
-## Commands
+## Quickstart
 
 ```bash
-pnpm install                 # workspace install
-pnpm dev                     # web:3000 + server:8080
-pnpm test                    # vitest across workspace
-pnpm typecheck && pnpm lint  # must pass before any commit
-pnpm audit:nomock            # no mock data in runtime code — must be empty
+pnpm install
+cp apps/server/.env.example apps/server/.env    # fill in (see below)
+pnpm -F server txline:activate                  # one-time: on-chain free-tier subscription → API token
+pnpm dev                                        # server :8080 + web :3000
 ```
 
-Server env: copy `apps/server/.env.example` to `apps/server/.env` and fill in
-TxLINE credentials (hackathon Telegram channel) and an RPC endpoint. Credentials
-are server-only and never reach the browser.
+Checks: `pnpm test` · `pnpm typecheck` · `pnpm lint` · `pnpm audit:nomock`
+(runtime code must contain no mock/faker/fixture data — CI enforces all four).
 
-## Hard rules
+## Architecture
 
-No mock data in runtime code. Non-custodial always — no server-side keys, no
-auto-signing. Never show a stale price as live. Simulate before sign.
-Full list: `docs/CLAUDE.md` §2.
+```
+                ┌───────────────────────── apps/server (Fastify) ─────────────────────────┐
+                │                                                                          │
+ TxLINE feed ──▶│ TxLineAdapter ──▶ Consensus ──▶ Valuation ──▶ WS /ws ────────────────────│──▶ apps/web (Next.js)
+ (SSE streams,  │  (real schema,     (de-vig,      (positions ×   CONSENSUS/VALUATION/      │    terminal UI,
+  guest JWT +   │   backoff,         recency       consensus)     EVENT/FEED_HEALTH/        │    wallet adapter,
+  X-Api-Token)  │   audit-first)     blend,                       RULE_FIRED                │    signing only
+                │        │           outliers)         ▲                                    │
+ Solana RPC ───▶│        ▼               │             │          HTTP: /positions/:wallet  │
+                │  Packet audit log      ▼        VenueAdapter    /hedge/preview|confirm    │
+                │  (SQLite, hash    Event inference (Jupiter       /rules CRUD              │
+                │   before parse)   (odds jumps §6)  Predict)                               │
+                └──────────────────────────────────────────────────────────────────────────┘
+                                             │
+                                             ▼
+                            Solana: venue program (positions, orders)
+                                    + Memo program (lock + rule-intent commitments)
+```
+
+- **`packages/core`** — pure financial math, zero I/O, injected time: de-vig,
+  recency-weighted consensus with outlier guard, valuation with staleness
+  lockout, hedge planning (close-vs-synthetic route, exact integer payout
+  matrices), odds-discontinuity event inference. Property-tested.
+- **`packages/venue-adapters`** — every external schema quarantined:
+  `txline/` (feed) and `jupiter/` (venue). When a wire format changes, exactly
+  one directory changes.
+- **`apps/server`** — ingest, audit log, WS fanout, hedge orchestration
+  (preview → **mandatory simulate** → unsigned tx → post-verify → memo),
+  rule engine v1, signed-message auth.
+- **`apps/web`** — terminal UI. Talks HTTP/WS only; TxLINE credentials never
+  reach the browser. First load 216 kB gz (budget 300 kB).
+
+## TxLINE integration (the product's reason to exist)
+
+TxLINE is the **primary input**: fair valuation, hedge pricing sanity, and
+rule triggers all derive from it; the product is inoperable without it.
+
+- Free World Cup tier, activated fully on-chain: `subscribe()` on the TxLINE
+  oracle program → guest JWT → wallet-signed activation → `X-Api-Token`
+  (`pnpm -F server txline:activate` automates all of it, devnet or mainnet).
+- Live odds and score-action **SSE streams** + snapshot endpoints; prices are
+  decimal odds ×1000; every record carries a `MessageId` used as the
+  provenance packet id.
+- Every raw payload is sha256-hashed into the audit log **before parsing**, so
+  any displayed fair value traces back to source packets — matching TxLINE's
+  own on-chain anchoring story. UI numbers carry a TxLINE badge with packet
+  ids on hover.
+- Full wire-schema documentation: `packages/venue-adapters/src/txline/SCHEMA.md`.
+- If the feed tier lacks explicit events, goals are inferred from sustained
+  ≥8-point consensus jumps (still 100% real data) and visibly tagged
+  "⚡ inferred" (`packages/core/src/eventInfer.ts`).
+
+## Venue
+
+Selection research and the measured liquidity gate: `docs/venue-selection.md`.
+Current lean: **Jupiter Predict** (adapter implemented against the documented
+API: positions, size-aware quotes, hedge = opposite-side buy, DELETE-to-close).
+Drift BET is the runner-up; the `VenueAdapter` interface makes switching a
+one-directory change.
+
+## Security posture
+
+- **Non-custodial by construction.** No private keys server-side, ever. All
+  transactions are built unsigned and signed exclusively in the user's wallet.
+  Rules never auto-execute: a firing produces a prepared, simulated
+  transaction and a one-tap signing prompt.
+- **Simulate before sign.** No `simulateTransaction` pass ⇒ no signature
+  prompt, including for rule firings. The client independently re-checks the
+  payout matrix before enabling the sign button.
+- **Never a stale price as live.** Feed >30s old ⇒ STALE banner, valuations
+  frozen visibly, lock-in disabled — enforced in core (`FeedStaleError`), at
+  the tx layer (preview refuses), and in the UI.
+- **Auditability.** Locks write an on-chain memo commitment
+  (`sha256(fixture|market|side|fraction|packetIds)`); rules pre-commit their
+  intent hash on-chain at creation; every firing logs its triggering packet.
+- Mutating endpoints require a wallet-signed challenge (`zygos:{action}:{nonce}`,
+  replay-guarded). TxLINE credentials live only in server env vars.
+
+Zygos is position risk management for prediction markets: it takes no
+counterparty risk, holds no funds, and offers no odds. Venue availability by
+jurisdiction is the venue's responsibility and is disclaimed at wallet connect.
+
+## Known limitations (stated, not hidden)
+
+- The Jupiter market-binding registry (TxLINE fixture ↔ venue market) starts
+  empty and is populated at the liquidity gate; unmapped positions surface as
+  `UNMAPPED_OUTCOME` rather than being silently valued.
+- Post-execution verification v1 confirms the position shrank/closed; strict
+  payout-matrix re-verification against chain state lands with live-venue
+  testing.
+- Per-bookmaker rows in the fair-value explainer join once live payloads
+  confirm the per-book feed shape; the de-vig walkthrough and provenance are
+  fully real today.
+
+## Documentation map
+
+| File | Contents |
+|---|---|
+| `docs/PRD.md` / `docs/DOCS.md` / `docs/PLAN.md` | requirements / technical design / schedule with gates |
+| `docs/phases.md` | phase status against the G0–G3 gates |
+| `docs/venue-selection.md` | venue shortlist, criteria, evidence |
+| `docs/runbook-matchday.md` | exact live-fire + deploy steps |
+| `docs/submission.md` | Superteam Earn submission text |
+| `docs/demo-video-script.md` | shot-by-shot demo video plan |
+| `docs/CLAUDE.md` | repo rules for AI-assisted development |

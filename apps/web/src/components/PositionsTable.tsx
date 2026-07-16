@@ -16,20 +16,32 @@ export function PositionsTable({
   positions,
   feedStates,
   walletConnected,
+  loading,
+  onRefresh,
   onLockIn,
   onArmRule,
 }: {
   positions: ValuedPositionDto[];
   feedStates: Map<string, FeedState>;
   walletConnected: boolean;
+  loading: boolean;
+  onRefresh: () => void;
   onLockIn: (dto: ValuedPositionDto) => void;
   onArmRule: (dto: ValuedPositionDto) => void;
 }) {
   return (
     <section className="flex min-h-0 flex-col gap-2">
-      <h2 className="text-xs uppercase tracking-widest text-terminal-dim">Positions</h2>
+      <div className="flex items-center justify-between">
+        <h2 className="text-xs uppercase tracking-widest text-terminal-dim">Positions</h2>
+        {walletConnected && (
+          <button onClick={onRefresh} disabled={loading} className="text-[10px] uppercase tracking-wider text-terminal-dim hover:text-terminal-text disabled:opacity-40">
+            {loading ? 'loading…' : '↻ refresh'}
+          </button>
+        )}
+      </div>
       {!walletConnected && <p className="text-xs text-terminal-dim">Connect a wallet to load positions.</p>}
-      {walletConnected && positions.length === 0 && <p className="text-xs text-terminal-dim">No open positions detected on the venue.</p>}
+      {walletConnected && loading && positions.length === 0 && <p className="text-xs text-terminal-dim">reading positions from the venue…</p>}
+      {walletConnected && !loading && positions.length === 0 && <p className="text-xs text-terminal-dim">No open positions detected on the venue.</p>}
 
       <div className="flex-1 space-y-2 overflow-y-auto">
         {positions.map((dto) => {
