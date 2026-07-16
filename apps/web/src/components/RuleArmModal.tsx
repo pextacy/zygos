@@ -1,14 +1,10 @@
 'use client';
 
-import { Buffer } from 'buffer';
 import { useState } from 'react';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
-import { PublicKey, Transaction, TransactionInstruction } from '@solana/web3.js';
 import { api } from '../lib/server';
 import type { RuleDto, ValuedPositionDto } from '../lib/types';
-import { buildWalletAuth } from '../lib/wallet';
-
-const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
+import { buildWalletAuth, deserializeTx } from '../lib/wallet';
 
 /** Arm a protective rule (FR-40/41): stored server-side, intent hash committed on-chain by the user's own signature. */
 export function RuleArmModal({
@@ -35,7 +31,7 @@ export function RuleArmModal({
     setError(null);
     try {
       const auth = await buildWalletAuth('rules-create', publicKey.toBase58(), signMessage);
-      const { rule, memo } = await api<{ rule: RuleDto; memo: string }>('/rules', {
+      const { rule, memoTxBase64 } = await api<{ rule: RuleDto; memo: string; memoTxBase64: string | null }>('/rules', {
         method: 'POST',
         body: JSON.stringify({
           wallet: publicKey.toBase58(),
@@ -48,17 +44,16 @@ export function RuleArmModal({
       });
       onLog('rule', `rule armed: ${template} ${fraction}% on ${dto.position.fixtureId} (intent ${rule.intentHash.slice(0, 12)}…)`);
 
-      // On-chain intent pre-commitment (FR-41): the user signs the memo themselves.
-      try {
-        const tx = new Transaction().add(
-          new TransactionInstruction({ keys: [], programId: MEMO_PROGRAM_ID, data: Buffer.from(memo, 'utf8') }),
-        );
-        tx.feePayer = publicKey;
-        tx.recentBlockhash = (await connection.getLatestBlockhash('confirmed')).blockhash;
-        const sig = await sendTransaction(tx, connection);
-        onLog('rule', `intent hash committed on-chain: ${sig}`);
-      } catch (memoErr) {
-        onLog('error', `rule armed but intent memo not committed: ${memoErr instanceof Error ? memoErr.message : memoErr}`);
+      // On-chain intent pre-commitment (FR-41): server-built unsigned memo tx, signed only here.
+      if (memoTxBase64) {
+        try {
+          const sig = await sendTransaction(deserializeTx(memoTxBase64), connection);
+          onLog('rule', `intent hash committed on-chain: ${sig}`);
+        } catch (memoErr) {
+          onLog('error', `rule armed but intent memo not committed: ${memoErr instanceof Error ? memoErr.message : memoErr}`);
+        }
+      } else {
+        onLog('error', 'rule armed without on-chain commitment (server has no RPC) — re-arm once RPC is configured');
       }
       onClose();
     } catch (err) {

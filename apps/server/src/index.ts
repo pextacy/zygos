@@ -1,9 +1,12 @@
 import Fastify from 'fastify';
-import { Connection } from '@solana/web3.js';
+import { eq } from 'drizzle-orm';
+import { Connection, PublicKey } from '@solana/web3.js';
 import { marketKeyString, SimulationFailedError } from '@zygos/core';
 import { JupiterPredictAdapter, TxLineAdapter } from '@zygos/venue-adapters';
 import { verifyWalletAuth, type WalletAuth } from './auth.js';
-import { openDb } from './db.js';
+import { buildUnsignedMemoTx, ruleCommitment } from './chain/memo.js';
+import { TxOracleValidator } from './chain/txoracle.js';
+import { openDb, packets } from './db.js';
 import { loadEnv } from './env.js';
 import { FeedService } from './feed.js';
 import { HedgeOrchestrator, PreviewError } from './hedge.js';
@@ -28,6 +31,7 @@ const db = openDb(env.DATABASE_URL);
  * says so explicitly. There is no simulated fallback.
  */
 let feed: FeedService | null = null;
+let txlineAdapter: TxLineAdapter | null = null;
 if (env.TXLINE_API_TOKEN) {
   const adapter = new TxLineAdapter({
     origin: env.TXLINE_ORIGIN,
@@ -36,6 +40,7 @@ if (env.TXLINE_API_TOKEN) {
     onParseError: (e) => app.log.warn({ fixtureId: e.fixtureId, reason: e.reason }, 'txline parse/stream issue'),
   });
   feed = new FeedService(adapter, db, app.log);
+  txlineAdapter = adapter;
   await adapter.connect();
   app.log.info({ origin: env.TXLINE_ORIGIN }, 'txline feed connected');
 } else {
@@ -53,6 +58,17 @@ let ruleEngine: RuleEngine | null = null;
 const connection = env.RPC_URL ? new Connection(env.RPC_URL, 'confirmed') : null;
 if (!connection) {
   app.log.warn('RPC_URL not set — transactions cannot be simulated, so no signature prompts will be offered');
+}
+
+/** On-chain verification of displayed odds against TxODDS's anchored Merkle roots (txoracle validate_odds). */
+let oracleValidator: TxOracleValidator | null = null;
+if (connection) {
+  try {
+    oracleValidator = new TxOracleValidator(connection, env.CLUSTER);
+    app.log.info({ cluster: env.CLUSTER }, 'txoracle validator ready');
+  } catch (err) {
+    app.log.error({ err: err instanceof Error ? err.message : String(err) }, 'txoracle validator init failed');
+  }
 }
 if (feed && env.JUPITER_API_KEY) {
   const venue = new JupiterPredictAdapter({ apiKey: env.JUPITER_API_KEY });
@@ -117,6 +133,30 @@ app.get<{ Params: { wallet: string } }>('/positions/:wallet', async (req, reply)
   return { wallet, positions: valuation.valueWallet(wallet, feed.snapshots(now), now) };
 });
 
+/**
+ * Cryptographic provenance check (FR-13 made verifiable): given an audited
+ * packet id, fetch its Merkle proof from TxLINE and validate it against the
+ * on-chain root via read-only simulation of txoracle `validate_odds`.
+ */
+app.post<{ Body: { packetId: string } }>('/verify/odds', async (req, reply) => {
+  if (!txlineAdapter) return reply.code(503).send({ error: 'feed not configured' });
+  if (!oracleValidator) return reply.code(503).send({ error: 'RPC not configured — on-chain verification unavailable' });
+  const packetId = req.body.packetId;
+  if (!packetId) return reply.code(400).send({ error: 'packetId required' });
+
+  const row = db.select().from(packets).where(eq(packets.packetId, packetId)).all()[0];
+  if (!row) return reply.code(404).send({ error: 'packet not in the audit log' });
+
+  try {
+    const proof = await txlineAdapter.fetchOddsValidation(row.fixtureId, row.sourceTs);
+    const result = await oracleValidator.validateOdds(proof);
+    app.log.info({ packetId, verified: result.verified, rootsAccount: result.rootsAccount }, 'on-chain odds verification');
+    return result;
+  } catch (err) {
+    return reply.code(502).send({ error: `verification failed: ${err instanceof Error ? err.message : String(err)}` });
+  }
+});
+
 interface HedgePreviewBody {
   wallet: string;
   positionRef: string;
@@ -173,8 +213,17 @@ app.post<{ Body: RuleCreateBody }>('/rules', async (req, reply) => {
   }
   try {
     const rule = await ruleEngine.create(req.body);
-    // The intent hash is returned for the client to commit on-chain via a memo it signs (FR-41).
-    return { rule, memo: `zygos:rule:${rule.intentHash}` };
+    // Intent pre-commitment (FR-41): server builds the unsigned memo tx; only the user's wallet signs it.
+    const memo = ruleCommitment(rule.intentHash);
+    let memoTxBase64: string | null = null;
+    if (connection) {
+      try {
+        memoTxBase64 = (await buildUnsignedMemoTx(connection, new PublicKey(req.body.wallet), memo)).txBase64;
+      } catch (err) {
+        app.log.warn({ err: err instanceof Error ? err.message : String(err) }, 'rule memo tx build failed — rule armed without on-chain commitment');
+      }
+    }
+    return { rule, memo, memoTxBase64 };
   } catch (err) {
     return mapHedgeError(err, reply);
   }

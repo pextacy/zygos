@@ -44,7 +44,8 @@ Implemented in `apps/server/scripts/txline-activate.ts` (adapter consumes
 | `GET /odds/stream` | **SSE** — all permitted odds updates, one record per data message |
 | `GET /scores/stream` | **SSE** — score/action events |
 | `GET /scores/historical/{fixtureId}` | replay for completed fixtures |
-| `GET /odds/proof/...`, `/scores/proof/...` | Merkle proofs for on-chain validation |
+| `GET /odds/validation?fixtureId=&timestamp=` | Merkle proof bundle `{odds, summary, subTreeProof, mainTreeProof}` for `validate_odds` |
+| `GET /scores/stat-validation?fixtureId=&seq=&statKey=` | stat proof bundle for `validate_stat`/V2 |
 
 SSE framing: data messages have `id: "timestamp:index"` and a JSON record in
 `data`; heartbeats have `event: heartbeat` (e.g. `{"Ts": ...}`).
@@ -87,6 +88,20 @@ Participant1, Participant2Id, Participant2, FixtureId, Participant1IsHome}`
 - Stat keys (for on-chain validation & settlement): 1/2 = P1/P2 goals,
   3/4 yellow cards, 5/6 red cards, 7/8 corners; period prefix ×1000.
 - `confirmed: false` actions (e.g. VAR pending) never fire rules.
+
+## On-chain validation (txoracle program)
+
+Implemented in `apps/server/src/chain/txoracle.ts` (view-only simulation,
+zero cost, no state change) and exposed as `POST /verify/odds {packetId}`:
+
+- Odds proofs validate against `["daily_batch_roots", epochDay u16 LE]` PDA;
+  fixtures against `["ten_daily_fixtures_roots", windowStartDay u16 LE]`
+  (10-day windows); scores against `["daily_scores_roots", epochDay u16 LE]`.
+- **Epoch day always derives from the proof's own timestamp** (docs rule) —
+  for odds `validation.odds.Ts`, never `Date.now()`.
+- Packed fixture ids carry the game state above 2^48 (`unpackFixtureId`).
+- `validate_odds(ts, Odds, OddsBatchSummary, ProofNode[], ProofNode[]) → bool`,
+  compute limit 1.4M units, called with `.view()`.
 
 ## Open items (verify at first live session)
 

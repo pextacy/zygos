@@ -34,14 +34,14 @@ const NETWORKS = {
   devnet: {
     rpcUrl: 'https://api.devnet.solana.com',
     apiOrigin: 'https://txline-dev.txodds.com',
-    idlPath: join(HERE, 'idl', 'txoracle.devnet.json'),
+    idlPath: join(HERE, '..', '..', 'src', 'chain', 'idl', 'txoracle.devnet.json'),
     txlTokenMint: new PublicKey('4Zao8ocPhmMgq7PdsYWyxvqySMGx7xb9cMftPMkEokRG'),
     canAirdrop: true,
   },
   'mainnet-beta': {
     rpcUrl: 'https://api.mainnet-beta.solana.com',
     apiOrigin: 'https://txline.txodds.com',
-    idlPath: join(HERE, 'idl', 'txoracle.mainnet.json'),
+    idlPath: join(HERE, '..', '..', 'src', 'chain', 'idl', 'txoracle.mainnet.json'),
     txlTokenMint: new PublicKey('Zhw9TVKp68a1QrftncMSd6ELXKDtpVMNuMGr1jNwdeL'),
     canAirdrop: false,
   },

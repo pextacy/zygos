@@ -1,7 +1,16 @@
 'use client';
 
+import { useState } from 'react';
 import { clockTime, pct } from '../lib/format';
+import { api } from '../lib/server';
 import type { ConsensusFrame } from '../lib/types';
+
+interface OddsVerification {
+  verified: boolean;
+  rootsAccount: string;
+  programId: string;
+  epochDay: number;
+}
 
 /**
  * Fair-value explainer (FR-51 / US-5): how the consensus price is built.
@@ -9,6 +18,20 @@ import type { ConsensusFrame } from '../lib/types';
  * shape; the method walkthrough and provenance are fully real today.
  */
 export function ExplainerPanel({ frame, onClose }: { frame: ConsensusFrame; onClose: () => void }) {
+  const [verify, setVerify] = useState<{ state: 'idle' | 'busy' | 'done' | 'error'; result?: OddsVerification; error?: string }>({ state: 'idle' });
+
+  async function verifyOnChain() {
+    const packetId = frame.packetIds[0];
+    if (!packetId) return;
+    setVerify({ state: 'busy' });
+    try {
+      const result = await api<OddsVerification>('/verify/odds', { method: 'POST', body: JSON.stringify({ packetId }) });
+      setVerify({ state: 'done', result });
+    } catch (err) {
+      setVerify({ state: 'error', error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
       <div className="max-h-[80vh] w-full max-w-md overflow-y-auto rounded border border-terminal-border bg-terminal-panel p-4 text-sm" onClick={(e) => e.stopPropagation()}>
@@ -50,6 +73,22 @@ export function ExplainerPanel({ frame, onClose }: { frame: ConsensusFrame; onCl
             {frame.packetIds.length > 8 && <li>… +{frame.packetIds.length - 8} more</li>}
           </ul>
           <p className="mt-2">Every packet is hashed into the audit log and anchored by TxLINE on Solana — this price is reproducible from source data.</p>
+
+          <div className="mt-2">
+            {verify.state === 'idle' && (
+              <button onClick={verifyOnChain} className="rounded border border-terminal-border px-2 py-1 uppercase tracking-widest hover:text-terminal-text">
+                verify newest packet on-chain
+              </button>
+            )}
+            {verify.state === 'busy' && <span>validating Merkle proof against the on-chain root…</span>}
+            {verify.state === 'done' && verify.result && (
+              <span className={verify.result.verified ? 'text-terminal-accent' : 'text-terminal-danger'}>
+                {verify.result.verified ? '✓ proven against on-chain root' : '✗ proof REJECTED by the oracle program'} · roots account{' '}
+                <span className="break-all">{verify.result.rootsAccount}</span> (epoch day {verify.result.epochDay})
+              </span>
+            )}
+            {verify.state === 'error' && <span className="text-terminal-warn">verification unavailable: {verify.error}</span>}
+          </div>
         </div>
       </div>
     </div>

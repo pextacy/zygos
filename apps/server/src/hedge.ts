@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import {
   marketKeyString,
   planHedge,
@@ -7,8 +6,9 @@ import {
   type HedgePlan,
   type OutcomeKey,
 } from '@zygos/core';
-import { Connection, PublicKey, Transaction, TransactionInstruction, VersionedTransaction } from '@solana/web3.js';
+import { Connection, PublicKey, Transaction, VersionedTransaction } from '@solana/web3.js';
 import type { VenuePosition } from '@zygos/venue-adapters';
+import { buildUnsignedMemoTx, lockCommitment } from './chain/memo.js';
 import type { FeedLogger, FeedService } from './feed.js';
 import type { ValuationService } from './valuation.js';
 
@@ -19,8 +19,6 @@ import type { ValuationService } from './valuation.js';
  * commitment is a second unsigned tx issued by /hedge/confirm only after
  * post-verification (DOCS.md §5.6).
  */
-
-const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr');
 
 const COMPLEMENTS: Record<string, OutcomeKey[]> = {
   HOME: ['DRAW', 'AWAY'],
@@ -155,26 +153,14 @@ export class HedgeOrchestrator {
     let memoTxBase64: string | null = null;
     if (this.connection && shrunk) {
       const source = before ?? after;
-      const commitment = createHash('sha256')
-        .update(
-          JSON.stringify({
-            fixtureId: source?.fixtureId ?? 'unknown',
-            market: source ? marketKeyString(source.market) : 'unknown',
-            side: source?.outcome ?? 'unknown',
-            fraction,
-            packetIds: [...packetIds].sort(),
-          }),
-        )
-        .digest('hex');
-      const ix = new TransactionInstruction({
-        keys: [],
-        programId: MEMO_PROGRAM_ID,
-        data: Buffer.from(`zygos:lock:${commitment}`, 'utf8'),
+      const memo = lockCommitment({
+        fixtureId: source?.fixtureId ?? 'unknown',
+        market: source ? marketKeyString(source.market) : 'unknown',
+        side: source?.outcome ?? 'unknown',
+        fraction,
+        packetIds,
       });
-      const tx = new Transaction().add(ix);
-      tx.feePayer = new PublicKey(wallet);
-      tx.recentBlockhash = (await this.connection.getLatestBlockhash('confirmed')).blockhash;
-      memoTxBase64 = tx.serialize({ requireAllSignatures: false }).toString('base64');
+      memoTxBase64 = (await buildUnsignedMemoTx(this.connection, new PublicKey(wallet), memo)).txBase64;
     }
 
     return { verified: shrunk, sizeAfter: after?.size.toString() ?? null, memoTxBase64 };

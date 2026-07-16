@@ -132,6 +132,14 @@ export class TxLineAdapter implements OddsFeedAdapter {
     this.subscribed.clear();
   }
 
+  /**
+   * Merkle proof bundle for one odds update (GET /api/odds/validation) — fed
+   * to the txoracle `validate_odds` view call for on-chain verification.
+   */
+  async fetchOddsValidation(fixtureId: string, timestampMs: number): Promise<unknown> {
+    return this.apiGet(`/api/odds/validation?fixtureId=${encodeURIComponent(fixtureId)}&timestamp=${timestampMs}`);
+  }
+
   /** Upcoming/current fixtures — used by the server's fixture matcher and cli:watch list mode. */
   async listFixtures(params?: { competitionId?: number; startEpochDay?: number }): Promise<TxFixture[]> {
     const q = new URLSearchParams();
