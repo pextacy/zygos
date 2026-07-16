@@ -67,6 +67,14 @@ For Jupiter Predict and Drift BET, on 2–3 live World Cup 1X2/match markets:
 _Pending the liquidity gate. Current lean: Jupiter Predict if positions prove
 RPC-readable on Solana; otherwise Drift BET if it lists World Cup markets._
 
+**Implementation head start:** `JupiterPredictAdapter` is already implemented
+in `packages/venue-adapters/src/jupiter/` against the documented API
+(`api.jup.ag/prediction/v1`, `x-api-key` auth, micro-USD amounts, unsigned-tx
+order flow, DELETE-to-close). Response field shapes are marked provisional in
+`schema.ts` and must be verified against live responses during the gate. If
+the gate picks Drift BET instead, only a new adapter directory is added — the
+interface is identical.
+
 ## Sources
 
 - [Solana Hub — 2026 World Cup onchain landscape](https://x.com/SolanaHub_/status/2073814162539491790)

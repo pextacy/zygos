@@ -12,6 +12,7 @@ const envSchema = z.object({
   HOST: z.string().default('0.0.0.0'),
   TXLINE_API_KEY: z.string().min(1).optional(),
   TXLINE_BASE_URL: z.string().url().optional(),
+  JUPITER_API_KEY: z.string().min(1).optional(),
   RPC_URL: z.string().url().optional(),
   CLUSTER: z.enum(['mainnet-beta', 'devnet']).default('devnet'),
   DATABASE_URL: z.string().default('./data/zygos.db'),
