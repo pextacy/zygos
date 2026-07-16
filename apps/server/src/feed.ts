@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto';
 import {
   applyTick,
+  createInferenceState,
+  inferFromSnapshot,
   marketKeyString,
   snapshot,
   type ConsensusSnapshot,
@@ -37,6 +39,10 @@ export class FeedService {
   private readonly listeners: FeedListeners[] = [];
   private readonly subscribed = new Set<string>();
 
+  /** Fixtures with a real (explicit) event stream: inference is suppressed for them (DOCS.md §6 is a fallback). */
+  private readonly fixturesWithRealEvents = new Set<string>();
+  private readonly inference = createInferenceState();
+
   constructor(
     private readonly adapter: OddsFeedAdapter,
     private readonly db: Db,
@@ -44,6 +50,7 @@ export class FeedService {
   ) {
     adapter.onTick((tick) => this.handleTick(tick));
     adapter.onEvent((event) => {
+      if (!event.inferred) this.fixturesWithRealEvents.add(event.fixtureId);
       this.log.info({ fixtureId: event.fixtureId, type: event.type, packetId: event.packetId }, 'match event');
       for (const l of this.listeners) l.onEvent?.(event);
     });
@@ -136,6 +143,15 @@ export class FeedService {
         );
       }
       for (const l of this.listeners) l.onConsensus?.(snap);
+
+      // Odds-discontinuity event inference — only where no explicit event stream exists (DOCS.md §6).
+      if (!this.fixturesWithRealEvents.has(snap.fixtureId)) {
+        const inferred = inferFromSnapshot(this.inference, snap);
+        if (inferred) {
+          this.log.info({ fixtureId: inferred.fixtureId, team: inferred.team, packetId: tick.packetId }, 'event inferred from odds discontinuity');
+          for (const l of this.listeners) l.onEvent?.(inferred);
+        }
+      }
     }
   }
 }

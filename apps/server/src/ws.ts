@@ -5,6 +5,7 @@ import type { ConsensusSnapshot, MatchEvent } from '@zygos/core';
 import { marketKeyString } from '@zygos/core';
 import type { FastifyBaseLogger } from 'fastify';
 import type { FeedService } from './feed.js';
+import type { RuleEngine } from './rules.js';
 import type { ValuationListener, ValuationService } from './valuation.js';
 
 /**
@@ -21,8 +22,15 @@ const subscribeFrameSchema = z.object({
 
 const HEALTH_INTERVAL_MS = 5_000;
 
-export function attachWs(server: Server, feed: FeedService, valuation: ValuationService | null, log: FastifyBaseLogger): WebSocketServer {
+export function attachWs(
+  server: Server,
+  feed: FeedService,
+  valuation: ValuationService | null,
+  ruleEngine: RuleEngine | null,
+  log: FastifyBaseLogger,
+): WebSocketServer {
   const wss = new WebSocketServer({ server, path: '/ws' });
+  const walletBySocket = new Map<WebSocket, string>();
 
   const broadcast = (frame: object): void => {
     const payload = JSON.stringify(frame);
@@ -30,6 +38,14 @@ export function attachWs(server: Server, feed: FeedService, valuation: Valuation
       if (client.readyState === WebSocket.OPEN) client.send(payload);
     }
   };
+
+  // RULE_FIRED goes only to sockets subscribed with the owning wallet (full-screen signable prompt, FR-42).
+  ruleEngine?.onFired((frame) => {
+    const payload = JSON.stringify(frame);
+    for (const [client, wallet] of walletBySocket) {
+      if (wallet === frame.wallet && client.readyState === WebSocket.OPEN) client.send(payload);
+    }
+  });
 
   feed.addListener({
     onConsensus: (snap: ConsensusSnapshot) =>
@@ -61,6 +77,7 @@ export function attachWs(server: Server, feed: FeedService, valuation: Valuation
     socket.on('close', () => {
       for (const l of valuationListeners) valuation?.removeListener(l);
       valuationListeners.length = 0;
+      walletBySocket.delete(socket);
     });
 
     socket.on('message', (data) => {
@@ -80,6 +97,7 @@ export function attachWs(server: Server, feed: FeedService, valuation: Valuation
         .subscribe(frame.data.fixtureIds)
         .then(() => {
           if (frame.data.wallet !== undefined) {
+            walletBySocket.set(socket, frame.data.wallet);
             if (valuation === null) {
               socket.send(JSON.stringify({ type: 'ERROR', code: 'NO_VENUE_ADAPTER', detail: 'no venue configured — positions cannot be valued' }));
             } else {

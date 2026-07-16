@@ -25,6 +25,31 @@ export const packets = sqliteTable('packets', {
   rawHash: text('raw_hash').notNull(),
 });
 
+/** Automation rules v1 (PRD FR-4x). Stored server-side keyed by wallet; intent hash pre-committed on-chain by the user. */
+export const rules = sqliteTable('rules', {
+  id: text('id').primaryKey(),
+  wallet: text('wallet').notNull(),
+  positionRef: text('position_ref').notNull(),
+  fixtureId: text('fixture_id').notNull(),
+  /** HOME | AWAY — the side the position holds; determines event matching. */
+  team: text('team').notNull(),
+  template: text('template').notNull(), // 'GOAL_LOCK' | 'RED_CARD_REDUCE'
+  fraction: integer('fraction').notNull(), // lock fraction in ppm (0, 1_000_000]
+  createdAt: integer('created_at').notNull(),
+  intentHash: text('intent_hash').notNull(),
+});
+
+/** Every rule firing, with the triggering TxLINE packet reference (FR-43). */
+export const ruleFirings = sqliteTable('rule_firings', {
+  id: text('id').primaryKey(),
+  ruleId: text('rule_id').notNull(),
+  packetId: text('packet_id').notNull(),
+  eventType: text('event_type').notNull(),
+  firedAt: integer('fired_at').notNull(),
+  /** event sourceTs → signable prompt, ms (PRD ≤3s median). */
+  latencyMs: integer('latency_ms').notNull(),
+});
+
 export type Db = ReturnType<typeof openDb>;
 
 export function openDb(databaseUrl: string) {
@@ -47,6 +72,26 @@ export function openDb(databaseUrl: string) {
       raw_hash TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_packets_fixture ON packets (fixture_id, source_ts);
+    CREATE TABLE IF NOT EXISTS rules (
+      id TEXT PRIMARY KEY,
+      wallet TEXT NOT NULL,
+      position_ref TEXT NOT NULL,
+      fixture_id TEXT NOT NULL,
+      team TEXT NOT NULL,
+      template TEXT NOT NULL,
+      fraction INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      intent_hash TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_rules_fixture ON rules (fixture_id);
+    CREATE TABLE IF NOT EXISTS rule_firings (
+      id TEXT PRIMARY KEY,
+      rule_id TEXT NOT NULL,
+      packet_id TEXT NOT NULL,
+      event_type TEXT NOT NULL,
+      fired_at INTEGER NOT NULL,
+      latency_ms INTEGER NOT NULL
+    );
   `);
-  return drizzle(sqlite, { schema: { rawPackets, packets } });
+  return drizzle(sqlite, { schema: { rawPackets, packets, rules, ruleFirings } });
 }

@@ -82,6 +82,18 @@ export class ValuationService {
     if (i !== -1) this.listeners.splice(i, 1);
   }
 
+  /** Find one position, refreshing from the venue when it is not cached. */
+  async getPosition(wallet: string, positionRef: string): Promise<VenuePosition | null> {
+    const cached = this.positionsByWallet.get(wallet)?.find((p) => p.positionRef === positionRef);
+    if (cached) return cached;
+    const refreshed = await this.refreshPositions(wallet);
+    return refreshed.find((p) => p.positionRef === positionRef) ?? null;
+  }
+
+  get venueAdapter(): VenueAdapter {
+    return this.venue;
+  }
+
   /** Value all of a wallet's positions against the given snapshots at nowMs. */
   valueWallet(wallet: string, snapshots: ConsensusSnapshot[], nowMs: number): ValuedPosition[] {
     const positions = this.positionsByWallet.get(wallet) ?? [];
