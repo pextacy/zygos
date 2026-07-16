@@ -40,12 +40,15 @@ export function attachWs(
   };
 
   // RULE_FIRED goes only to sockets subscribed with the owning wallet (full-screen signable prompt, FR-42).
-  ruleEngine?.onFired((frame) => {
+  const toOwner = (frame: { wallet: string }) => {
     const payload = JSON.stringify(frame);
     for (const [client, wallet] of walletBySocket) {
       if (wallet === frame.wallet && client.readyState === WebSocket.OPEN) client.send(payload);
     }
-  });
+  };
+  ruleEngine?.onFired(toOwner);
+  // Phase 4: delegated executions notify the owner — no signature needed, tx already landed.
+  ruleEngine?.onExecuted(toOwner);
 
   feed.addListener({
     onConsensus: (snap: ConsensusSnapshot) =>

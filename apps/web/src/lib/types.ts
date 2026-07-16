@@ -104,6 +104,17 @@ export interface RuleDto {
   intentHash: string;
 }
 
+export interface RuleExecutedFrame {
+  type: 'RULE_EXECUTED';
+  ruleId: string;
+  wallet: string;
+  positionRef: string;
+  template: 'GOAL_LOCK' | 'RED_CARD_REDUCE';
+  event: MatchEventDto;
+  signature: string;
+  latencyMs: number;
+}
+
 export type ServerFrame =
   | { type: 'HELLO'; serverTime: number }
   | { type: 'SUBSCRIBED'; fixtureIds: string[] }
@@ -112,7 +123,8 @@ export type ServerFrame =
   | EventFrame
   | FeedHealthFrame
   | ValuationFrame
-  | RuleFiredFrame;
+  | RuleFiredFrame
+  | RuleExecutedFrame;
 
 export interface ActivityEntry {
   id: string;

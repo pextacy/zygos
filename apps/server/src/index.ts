@@ -74,7 +74,7 @@ if (feed && env.JUPITER_API_KEY) {
   const venue = new JupiterPredictAdapter({ apiKey: env.JUPITER_API_KEY });
   valuation = new ValuationService(venue, feed, app.log);
   hedge = new HedgeOrchestrator(valuation, feed, connection, app.log);
-  ruleEngine = new RuleEngine(db, valuation, hedge, feed, app.log);
+  ruleEngine = new RuleEngine(db, valuation, hedge, feed, app.log, connection);
   app.log.info({ venue: venue.venueId }, 'venue adapter + hedge + rules configured');
 } else if (feed) {
   app.log.warn('JUPITER_API_KEY not set — positions cannot be read or valued');
@@ -232,6 +232,34 @@ app.post<{ Body: RuleCreateBody }>('/rules', async (req, reply) => {
 app.get<{ Params: { wallet: string } }>('/rules/:wallet', async (req, reply) => {
   if (!ruleEngine) return reply.code(503).send({ error: 'rule engine not configured' });
   return { rules: ruleEngine.list(req.params.wallet) };
+});
+
+/**
+ * Delegated execution (Phase 4). POST without noncePubkey → nonce setup tx;
+ * with noncePubkey → durable-nonce lock tx to pre-sign. PUT stores the signed tx.
+ */
+app.post<{ Params: { id: string }; Body: { auth: WalletAuth; noncePubkey?: string } }>('/rules/:id/delegate', async (req, reply) => {
+  if (!ruleEngine) return reply.code(503).send({ error: 'rule engine not configured' });
+  const authResult = verifyWalletAuth('rules-delegate', req.body.auth);
+  if (!authResult.ok) return reply.code(401).send({ error: authResult.reason });
+  try {
+    return await ruleEngine.prepareDelegation(req.params.id, req.body.auth.wallet, req.body.noncePubkey);
+  } catch (err) {
+    return mapHedgeError(err, reply);
+  }
+});
+
+app.put<{ Params: { id: string }; Body: { auth: WalletAuth; noncePubkey: string; signedTxBase64: string } }>('/rules/:id/delegate', async (req, reply) => {
+  if (!ruleEngine) return reply.code(503).send({ error: 'rule engine not configured' });
+  const authResult = verifyWalletAuth('rules-delegate-store', req.body.auth);
+  if (!authResult.ok) return reply.code(401).send({ error: authResult.reason });
+  if (!req.body.noncePubkey || !req.body.signedTxBase64) return reply.code(400).send({ error: 'noncePubkey and signedTxBase64 required' });
+  try {
+    ruleEngine.storeDelegation(req.params.id, req.body.auth.wallet, req.body.noncePubkey, req.body.signedTxBase64);
+    return { delegated: true, status: ruleEngine.delegationStatus(req.params.id) };
+  } catch (err) {
+    return mapHedgeError(err, reply);
+  }
 });
 
 app.delete<{ Params: { id: string }; Body: { auth: WalletAuth } }>('/rules/:id', async (req, reply) => {

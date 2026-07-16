@@ -31,6 +31,7 @@ export type Action =
   | { type: 'positions'; list: ValuedPositionDto[] }
   | { type: 'event'; event: MatchEventDto }
   | { type: 'ruleFired'; frame: RuleFiredFrame }
+  | { type: 'ruleExecuted'; frame: import('./types').RuleExecutedFrame }
   | { type: 'dismissRuleFire' }
   | { type: 'subscribed'; fixtureIds: string[] }
   | { type: 'log'; kind: ActivityEntry['kind']; text: string };
@@ -77,6 +78,12 @@ export function reducer(state: TerminalState, action: Action): TerminalState {
         { ...state, pendingRuleFire: action.frame },
         { type: 'log', kind: 'rule', text: `rule ${action.frame.template} fired (${action.frame.latencyMs}ms after event, packet ${action.frame.event.packetId})` },
       );
+    case 'ruleExecuted':
+      return reducer(state, {
+        type: 'log',
+        kind: 'lock',
+        text: `⚡ delegated rule EXECUTED on-chain: ${action.frame.template} → ${action.frame.signature} (${action.frame.latencyMs}ms after event)`,
+      });
     case 'dismissRuleFire':
       return { ...state, pendingRuleFire: null };
     case 'subscribed':

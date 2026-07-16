@@ -117,6 +117,32 @@ Phases are strictly gated: **do not start phase N+1 work before gate GN passes o
 
 ---
 
+## Phase 4 — v2: Delegated Execution & Post-Hackathon (after Jul 19)
+
+**Objective:** ship the roadmap items the submission explicitly documents as
+v2, without ever weakening the non-custodial model.
+
+**Scope (from PRD US-4 "fully delegated execution is a documented v2 item",
+DOCS §7, PRD §7 business model):**
+- **Delegated rule execution (marquee item):** the user pre-signs the exact
+  lock transaction at arm time, built on a **durable nonce** so it stays valid
+  until the event; when the rule fires, the server *submits* the already-signed
+  transaction — no signature at 3 a.m., and still zero key custody: the server
+  can only ever land the one pre-agreed transaction, with slippage bounds
+  baked in. Fallback to the one-tap prompt when submission fails or quotes
+  moved beyond the signed bounds.
+- Multi-venue: second `VenueAdapter` (Drift BET) behind the same interface.
+- Ops: monitoring/alerting beyond /healthz, fee model wiring (per-lock bps).
+
+**Gate G4:**
+- [ ] Delegated flow works end-to-end on devnet: arm → nonce setup → pre-sign → event → server-submitted lock confirmed on-chain, with prompt fallback proven.
+- [ ] Security review of the stored pre-signed tx path (threat: DB leak ⇒ early submission of the pre-agreed lock only — document and bound).
+- [ ] Second venue adapter passing the same integration suite.
+
+**Status:** 🟡 delegated-execution core implemented and tested (see status log); on-chain E2E and second venue pending the same externals as G1–G3.
+
+---
+
 ## Cross-phase invariants (never cut, any phase)
 
 From PLAN.md §5 and CLAUDE.md §2:

@@ -63,6 +63,9 @@ export function useZygosSocket(dispatch: (a: Action) => void, wallet: string | n
           case 'RULE_FIRED':
             dispatch({ type: 'ruleFired', frame });
             break;
+          case 'RULE_EXECUTED':
+            dispatch({ type: 'ruleExecuted', frame });
+            break;
           case 'SUBSCRIBED':
             dispatch({ type: 'subscribed', fixtureIds: frame.fixtureIds });
             break;

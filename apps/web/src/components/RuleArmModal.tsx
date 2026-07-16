@@ -1,5 +1,6 @@
 'use client';
 
+import { Buffer } from 'buffer';
 import { useState } from 'react';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { api } from '../lib/server';
@@ -16,14 +17,53 @@ export function RuleArmModal({
   onClose: () => void;
   onLog: (kind: 'rule' | 'error', text: string) => void;
 }) {
-  const { publicKey, signMessage, sendTransaction } = useWallet();
+  const { publicKey, signMessage, signTransaction, sendTransaction } = useWallet();
   const { connection } = useConnection();
   const [template, setTemplate] = useState<'GOAL_LOCK' | 'RED_CARD_REDUCE'>('GOAL_LOCK');
   const [fraction, setFraction] = useState(70);
+  const [delegated, setDelegated] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const team = dto.position.outcome as 'HOME' | 'AWAY';
+
+  /** Phase 4 delegated flow: nonce setup (if needed) → pre-sign the durable-nonce lock → server stores it. */
+  async function delegate(ruleId: string) {
+    if (!publicKey || !signMessage || !signTransaction) {
+      onLog('error', 'wallet does not support signTransaction — delegated mode unavailable, rule stays prompt-based');
+      return;
+    }
+    const authFor = (action: string) => buildWalletAuth(action, publicKey.toBase58(), signMessage);
+
+    let step = await api<
+      | { kind: 'NONCE_SETUP'; noncePubkey: string; setupTxBase64: string }
+      | { kind: 'DELEGATE_TX'; noncePubkey: string; delegateTxBase64: string }
+    >(`/rules/${ruleId}/delegate`, { method: 'POST', body: JSON.stringify({ auth: await authFor('rules-delegate') }) });
+
+    if (step.kind === 'NONCE_SETUP') {
+      onLog('rule', 'creating your durable-nonce account (one-time)…');
+      const sig = await sendTransaction(deserializeTx(step.setupTxBase64), connection);
+      await connection.confirmTransaction(sig, 'confirmed');
+      step = await api<typeof step>(`/rules/${ruleId}/delegate`, {
+        method: 'POST',
+        body: JSON.stringify({ auth: await authFor('rules-delegate'), noncePubkey: step.noncePubkey }),
+      });
+    }
+    if (step.kind !== 'DELEGATE_TX') throw new Error('unexpected delegation step');
+
+    const tx = deserializeTx(step.delegateTxBase64);
+    if ('version' in tx) throw new Error('versioned tx cannot be delegated');
+    const signed = await signTransaction(tx);
+    await api(`/rules/${ruleId}/delegate`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        auth: await authFor('rules-delegate-store'),
+        noncePubkey: step.noncePubkey,
+        signedTxBase64: Buffer.from(signed.serialize({ requireAllSignatures: false })).toString('base64'),
+      }),
+    });
+    onLog('rule', 'delegated execution armed: your pre-signed lock will be submitted the moment the rule fires — no signature needed at match time');
+  }
 
   async function arm() {
     if (!publicKey || !signMessage) return;
@@ -43,6 +83,14 @@ export function RuleArmModal({
         }),
       });
       onLog('rule', `rule armed: ${template} ${fraction}% on ${dto.position.fixtureId} (intent ${rule.intentHash.slice(0, 12)}…)`);
+
+      if (delegated) {
+        try {
+          await delegate(rule.id);
+        } catch (delegateErr) {
+          onLog('error', `delegation failed — rule stays prompt-based: ${delegateErr instanceof Error ? delegateErr.message : delegateErr}`);
+        }
+      }
 
       // On-chain intent pre-commitment (FR-41): server-built unsigned memo tx, signed only here.
       if (memoTxBase64) {
@@ -91,8 +139,18 @@ export function RuleArmModal({
           <input type="range" min={10} max={100} step={5} value={fraction} onChange={(e) => setFraction(Number(e.target.value))} className="mt-1 w-full accent-terminal-accent" />
         </label>
 
+        <label className="mt-3 flex items-start gap-2 text-[11px] leading-4 text-terminal-dim">
+          <input type="checkbox" checked={delegated} onChange={(e) => setDelegated(e.target.checked)} className="mt-0.5 accent-terminal-accent" />
+          <span>
+            <span className="text-terminal-text">Delegate execution (v2):</span> pre-sign the exact lock now on a durable nonce; it is
+            submitted automatically when the event fires. The server can only ever land this one pre-agreed transaction.
+          </span>
+        </label>
+
         <p className="mt-3 text-[11px] leading-4 text-terminal-dim">
-          Rules never auto-sign. When the event fires, a pre-built simulated transaction appears for one-tap signing — you stay in control.
+          {delegated
+            ? 'You sign once, up front, with slippage bounds baked in — nothing to tap at match time.'
+            : 'Rules never auto-sign. When the event fires, a pre-built simulated transaction appears for one-tap signing — you stay in control.'}
         </p>
 
         {error && <p className="mt-2 text-xs text-terminal-danger">{error}</p>}

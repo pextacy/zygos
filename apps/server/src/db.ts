@@ -39,6 +39,20 @@ export const rules = sqliteTable('rules', {
   intentHash: text('intent_hash').notNull(),
 });
 
+/**
+ * Delegated execution (Phase 4): the user's pre-signed, durable-nonce lock
+ * transaction per rule. The server can only ever SUBMIT this exact tx.
+ */
+export const delegations = sqliteTable('delegations', {
+  ruleId: text('rule_id').primaryKey(),
+  wallet: text('wallet').notNull(),
+  noncePubkey: text('nonce_pubkey').notNull(),
+  signedTxBase64: text('signed_tx_base64').notNull(),
+  createdAt: integer('created_at').notNull(),
+  status: text('status').notNull(), // 'armed' | 'submitted' | 'failed'
+  submittedSig: text('submitted_sig'),
+});
+
 /** Every rule firing, with the triggering TxLINE packet reference (FR-43). */
 export const ruleFirings = sqliteTable('rule_firings', {
   id: text('id').primaryKey(),
@@ -92,6 +106,15 @@ export function openDb(databaseUrl: string) {
       fired_at INTEGER NOT NULL,
       latency_ms INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS delegations (
+      rule_id TEXT PRIMARY KEY,
+      wallet TEXT NOT NULL,
+      nonce_pubkey TEXT NOT NULL,
+      signed_tx_base64 TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      submitted_sig TEXT
+    );
   `);
-  return drizzle(sqlite, { schema: { rawPackets, packets, rules, ruleFirings } });
+  return drizzle(sqlite, { schema: { rawPackets, packets, rules, ruleFirings, delegations } });
 }
