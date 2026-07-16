@@ -12,6 +12,14 @@ export class FeedStaleError extends Error {
   }
 }
 
+/** Malformed odds at the adapter boundary (non-finite or ≤ 1.0 decimal odds). */
+export class InvalidOddsError extends Error {
+  constructor(public readonly odds: number) {
+    super(`invalid decimal odds: ${odds} (must be finite and > 1)`);
+    this.name = 'InvalidOddsError';
+  }
+}
+
 /** Venue book/pool too thin to fill the requested size within tolerance. */
 export class InsufficientDepthError extends Error {
   constructor(

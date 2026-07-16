@@ -12,7 +12,7 @@ Update the status line of each phase as work progresses. When resuming a session
 | Phase | Window | Theme | Gate | Status |
 |-------|--------|-------|------|--------|
 | 0 — Access & Foundations | Jul 16 (evening) | Credentials, scaffold, venue shortlist | G0 | 🟡 Code done — non-code items (credentials, infra, shortlist, registration) pending |
-| 1 — Data Spine & Positions | Jul 17 | Real odds in, real positions valued | G1 | 🔲 Not started |
+| 1 — Data Spine & Positions | Jul 17 | Real odds in, real positions valued | G1 | 🟡 Code spine done; gate blocked on TxLINE credentials + venue liquidity gate |
 | 2 — Hedge Engine & UI | Jul 18 | One-click lock on-chain, product UI, rules v1 | G2 | 🔲 Not started |
 | 3 — Polish & Submission | Jul 19 | Fixes, video, submit | G3 | 🔲 Not started |
 
@@ -132,3 +132,4 @@ From PLAN.md §5 and CLAUDE.md §2:
 Append one line per gate decision (date, gate, result, fallback taken if any):
 
 - 2026-07-16 — G0 (code portion): scaffold complete. pnpm workspace (web/server/core/venue-adapters), CI workflow, typecheck+lint+test+audit:nomock all green locally; web builds (87.4 kB first load); server boots with honest scaffold `/healthz`. Remaining G0 items are non-code: TxLINE credentials, infra provisioning, venue shortlist, Earn registration.
+- 2026-07-16 — Phase 1 code spine complete ahead of schedule: consensus engine (de-vig + recency blend + outlier guard, tested vs DOCS §4 worked example), valuation math with FeedStaleError lockout, TxLineAdapter (REST polling, provisional schema in SCHEMA.md, backoff, fail-fast without creds), SQLite packet audit log (raw-hash-before-parse), FeedService, WS fanout (HELLO/CONSENSUS/EVENT/FEED_HEALTH), `cli:watch`. Venue shortlist researched → `venue-selection.md`: World excluded (migrated to Robinhood Chain Jul 8); lean Jupiter Predict, second Drift BET; measured liquidity gate pending. **G1 blocked on:** TxLINE credentials (T0.1/T1.1 live), venue liquidity gate + VenueAdapter (T1.4/T1.5), live-fire match test (T1.7), real position (T1.8).

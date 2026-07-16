@@ -41,6 +41,10 @@ export interface ConsensusSnapshot {
   probs: Partial<Record<OutcomeKey, number>>;
   /** Number of books contributing to the blend. <2 ⇒ LOW_CONFIDENCE. */
   bookCount: number;
+  /** LOW_CONFIDENCE when fewer than the configured minimum books contribute (DOCS.md §4.2). */
+  confidence: 'OK' | 'LOW_CONFIDENCE';
+  /** Books excluded from this blend by the outlier guard, for logging (DOCS.md §4.2). */
+  excludedBookIds: string[];
   /** Packet ids of every tick contributing to this snapshot (FR-13). */
   packetIds: string[];
   /** ms epoch of the newest contributing tick. */
