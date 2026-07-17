@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import cors from '@fastify/cors';
 import { eq } from 'drizzle-orm';
 import { Connection, PublicKey } from '@solana/web3.js';
 import { marketKeyString, SimulationFailedError } from '@zygos/core';
@@ -21,6 +22,11 @@ const app = Fastify({
     level: 'info',
     redact: ['req.headers.authorization'],
   },
+});
+
+// Browser clients live on another origin in production (Vercel web → Fly API).
+await app.register(cors, {
+  origin: env.WEB_ORIGIN ? env.WEB_ORIGIN.split(',').map((o) => o.trim()) : true,
 });
 
 const db = openDb(env.DATABASE_URL);
@@ -92,7 +98,7 @@ app.get('/healthz', async () => {
     feed: feed ? { ...feed.health(), states: feed.feedStates() } : { connected: false, lastTickAgeMs: {} },
     rpc: { configured: env.RPC_URL !== undefined, cluster: env.CLUSTER },
     txline: { configured: env.TXLINE_API_TOKEN !== undefined, origin: env.TXLINE_ORIGIN },
-    db: { configured: true, url: env.DATABASE_URL },
+    db: { configured: true },
   };
 });
 
@@ -231,7 +237,8 @@ app.post<{ Body: RuleCreateBody }>('/rules', async (req, reply) => {
 
 app.get<{ Params: { wallet: string } }>('/rules/:wallet', async (req, reply) => {
   if (!ruleEngine) return reply.code(503).send({ error: 'rule engine not configured' });
-  return { rules: ruleEngine.list(req.params.wallet) };
+  const engine = ruleEngine;
+  return { rules: engine.list(req.params.wallet).map((rule) => ({ ...rule, delegation: engine.delegationStatus(rule.id) })) };
 });
 
 /**

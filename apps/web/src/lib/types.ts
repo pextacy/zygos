@@ -102,6 +102,8 @@ export interface RuleDto {
   fractionPpm: number;
   createdAt: number;
   intentHash: string;
+  /** Present on GET /rules/:wallet — null means prompt-based (no pre-signed tx). */
+  delegation?: { status: 'armed' | 'submitted' | 'failed' | string; submittedSig: string | null } | null;
 }
 
 export interface RuleExecutedFrame {
@@ -125,6 +127,29 @@ export type ServerFrame =
   | ValuationFrame
   | RuleFiredFrame
   | RuleExecutedFrame;
+
+/** GET /healthz: server diagnostics — feed link, RPC, TxLINE config, DB. */
+export interface HealthDto {
+  status: 'ok' | 'feed-not-configured';
+  feed: { connected: boolean; lastTickAgeMs: Record<string, number>; states?: Record<string, FeedState> };
+  rpc: { configured: boolean; cluster: string };
+  txline: { configured: boolean; origin?: string };
+  db: { configured: boolean };
+}
+
+/** GET /fixtures: server-side subscribed fixtures with their latest consensus snapshots. */
+export interface FixtureDto {
+  fixtureId: string;
+  state: FeedState;
+  markets: Array<{
+    market: string;
+    probs: Partial<Record<OutcomeKey, number>>;
+    bookCount: number;
+    confidence: 'OK' | 'LOW_CONFIDENCE';
+    packetIds: string[];
+    asOf: number;
+  }>;
+}
 
 export interface ActivityEntry {
   id: string;

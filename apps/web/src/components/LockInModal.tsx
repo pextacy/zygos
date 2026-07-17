@@ -6,6 +6,7 @@ import { pct, signedPts, usd } from '../lib/format';
 import { api } from '../lib/server';
 import type { HedgePreviewDto, ValuedPositionDto } from '../lib/types';
 import { buildWalletAuth, deserializeTx } from '../lib/wallet';
+import { IconClose } from './Icons';
 import { TxBadge } from './TxBadge';
 
 /**
@@ -111,17 +112,20 @@ export function LockInModal({
   const plan = preview?.plan ?? null;
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 p-4" onClick={() => onClose()}>
-      <div className="w-full max-w-md rounded border border-terminal-border bg-terminal-panel p-4" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between">
-          <h3 className="text-xs uppercase tracking-widest text-terminal-dim">
-            Lock In — {dto.position.fixtureId} · {dto.position.outcome}
-          </h3>
-          <button onClick={() => onClose()} className="text-terminal-dim hover:text-terminal-text">✕</button>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-tertiary/40 p-4 backdrop-blur-sm" onClick={() => onClose()}>
+      <div className="w-full max-w-md rounded-xl border border-outline-variant bg-surface-container-lowest p-5 shadow-float" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-surface-container-high pb-3">
+          <h3 className="text-title-md text-on-surface">Lock In</h3>
+          <button onClick={() => onClose()} aria-label="Close" className="rounded-full p-1 text-outline transition-colors hover:bg-surface-container-high hover:text-on-surface">
+            <IconClose className="h-4 w-4" />
+          </button>
         </div>
+        <p className="mt-2 font-mono text-label-sm text-outline">
+          {dto.position.fixtureId} · {dto.position.market} · {dto.position.outcome}
+        </p>
 
-        <label className="mt-3 block text-xs text-terminal-dim">
-          Lock fraction: <span className="text-terminal-text">{Math.round(fraction * 100)}%</span>
+        <label className="mt-4 block text-label-sm text-outline">
+          Lock fraction: <span className="font-mono text-data-mono text-on-surface">{Math.round(fraction * 100)}%</span>
           <input
             type="range"
             min={5}
@@ -129,62 +133,62 @@ export function LockInModal({
             step={5}
             value={Math.round(fraction * 100)}
             onChange={(e) => setFraction(Number(e.target.value) / 100)}
-            className="mt-1 w-full accent-terminal-accent"
+            className="mt-2 w-full accent-primary"
           />
         </label>
 
-        {busy === 'preview' && <p className="mt-3 text-xs text-terminal-dim">quoting…</p>}
-        {error && <p className="mt-3 text-xs text-terminal-danger">{error}</p>}
+        {busy === 'preview' && <p className="mt-3 text-body-sm text-outline">Quoting…</p>}
+        {error && <p className="mt-3 text-body-sm text-error">{error}</p>}
 
-        {plan && !plan.viable && <p className="mt-3 text-xs text-terminal-warn">{plan.reason ?? 'lock not available at current prices'}</p>}
+        {plan && !plan.viable && <p className="mt-3 text-body-sm text-on-error-container">{plan.reason ?? 'lock not available at current prices'}</p>}
 
         {plan?.viable && preview && (
           <>
             {/* The product's soul (T2.5): better/worse than fair value, stated plainly. */}
-            <p className="mt-3 text-sm">
-              This lock fills you at <span className="tabular-nums">{pct(plan.impliedExitProb)}</span> —{' '}
-              <span className={plan.edgePts >= 0 ? 'text-terminal-accent' : 'text-terminal-danger'}>
+            <p className="mt-4 text-body-md text-on-surface">
+              This lock fills you at <span className="font-mono text-data-mono">{pct(plan.impliedExitProb)}</span> —{' '}
+              <span className={`font-semibold ${plan.edgePts >= 0 ? 'text-primary' : 'text-error'}`}>
                 {signedPts(plan.edgePts)} {plan.edgePts >= 0 ? 'above' : 'below'} TxLINE fair value
               </span>{' '}
               ({pct(plan.impliedExitProb - plan.edgePts / 100)})
               <TxBadge packetIds={preview.packetIds} asOf={preview.consensusAsOf} />
             </p>
 
-            <div className="mt-3 rounded border border-terminal-border">
-              <div className="border-b border-terminal-border px-2 py-1 text-[10px] uppercase tracking-widest text-terminal-dim">
-                Guaranteed payout matrix · route: {plan.route === 'CLOSE' ? 'direct close' : 'synthetic hedge'}
+            <div className="mt-4 overflow-hidden rounded-lg border border-outline-variant">
+              <div className="border-b border-surface-container-high bg-surface-container-low px-3 py-2 text-label-caps uppercase text-outline">
+                Guaranteed payout · {plan.route === 'CLOSE' ? 'direct close' : 'synthetic hedge'}
               </div>
-              <table className="w-full text-sm tabular-nums">
+              <table className="w-full font-mono text-data-mono">
                 <tbody>
                   {plan.payoutMatrix.map((row) => (
-                    <tr key={row.outcome} className="border-b border-terminal-border/50 last:border-0">
-                      <td className="px-2 py-1 text-terminal-dim">if {row.outcome}</td>
-                      <td className="px-2 py-1 text-right">{usd(row.total)}</td>
+                    <tr key={row.outcome} className="border-b border-surface-container-low last:border-0">
+                      <td className="px-3 py-1.5 text-on-surface-variant">if {row.outcome}</td>
+                      <td className="px-3 py-1.5 text-right text-on-surface">{usd(row.total)}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
 
-            <div className="mt-2 grid grid-cols-2 gap-2 text-[11px] text-terminal-dim">
-              <span>floor {usd(plan.guaranteedFloor)}</span>
-              <span className="text-right">upside kept {usd(plan.retainedUpside)}</span>
-              <span>{plan.route === 'CLOSE' ? `proceeds ${usd(plan.proceeds)}` : `hedge cost ${usd(plan.cost)}`}</span>
-              <span className="text-right">{preview.simulated ? 'simulation ✓' : 'NOT SIMULATED'}</span>
+            <div className="mt-3 grid grid-cols-2 gap-2 text-label-sm text-outline">
+              <span>Floor {usd(plan.guaranteedFloor)}</span>
+              <span className="text-right">Upside kept {usd(plan.retainedUpside)}</span>
+              <span>{plan.route === 'CLOSE' ? `Proceeds ${usd(plan.proceeds)}` : `Hedge cost ${usd(plan.cost)}`}</span>
+              <span className={`text-right ${preview.simulated ? 'text-primary' : 'text-error'}`}>{preview.simulated ? 'Simulation ✓' : 'NOT SIMULATED'}</span>
             </div>
 
             {!matrixConsistent && (
-              <p className="mt-2 text-xs text-terminal-danger">
-                ⚠ payout matrix failed the independent client check — do not sign. Report this.
+              <p className="mt-3 rounded-lg bg-error-container px-3 py-2 text-body-sm text-on-error-container">
+                Payout matrix failed the independent client check — do not sign. Report this.
               </p>
             )}
 
             <button
               disabled={!signable}
               onClick={executeLock}
-              className="mt-3 w-full rounded border border-terminal-accent py-2 text-sm uppercase tracking-widest text-terminal-accent enabled:hover:bg-terminal-accent enabled:hover:text-terminal-bg disabled:cursor-not-allowed disabled:opacity-40"
+              className="mt-4 w-full rounded bg-primary py-2.5 font-mono text-data-mono text-on-primary transition-colors enabled:hover:bg-primary-container disabled:cursor-not-allowed disabled:opacity-40"
             >
-              {busy === 'sign' ? 'awaiting wallet…' : `Sign lock (${Math.round(fraction * 100)}%)`}
+              {busy === 'sign' ? 'Awaiting wallet…' : `Sign lock (${Math.round(fraction * 100)}%)`}
             </button>
           </>
         )}

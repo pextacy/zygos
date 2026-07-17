@@ -62,9 +62,14 @@ Checks: `pnpm test` · `pnpm typecheck` · `pnpm lint` · `pnpm audit:nomock`
   one directory changes.
 - **`apps/server`** — ingest, audit log, WS fanout, hedge orchestration
   (preview → **mandatory simulate** → unsigned tx → post-verify → memo),
-  rule engine v1, signed-message auth.
-- **`apps/web`** — terminal UI. Talks HTTP/WS only; TxLINE credentials never
-  reach the browser. First load 216 kB gz (budget 300 kB).
+  rule engine v1, signed-message auth, CORS allowlist for the deployed web
+  origin (`WEB_ORIGIN`).
+- **`apps/web`** — trading terminal (light professional fintech design; Geist +
+  JetBrains Mono). Four views — Terminal (match feed, live consensus timeline,
+  positions, quick rules), Portfolio (fair-value totals, TxLINE-lead,
+  allocation), Automation (rule + delegation management), Analytics (market
+  provenance table, system status from `/healthz`). Talks HTTP/WS only; TxLINE
+  credentials never reach the browser. First load 225 kB gz (budget 300 kB).
 
 ## TxLINE integration (the product's reason to exist)
 

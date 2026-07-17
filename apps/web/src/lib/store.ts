@@ -1,30 +1,47 @@
-import type { ActivityEntry, ConsensusFrame, FeedState, MatchEventDto, RuleFiredFrame, ValuedPositionDto } from './types';
+import type { ActivityEntry, ConsensusFrame, FeedState, MatchEventDto, OutcomeKey, RuleFiredFrame, ValuedPositionDto } from './types';
+
+/** One observed consensus sample; accumulated per market over the session (real frames only). */
+export interface HistoryPoint {
+  asOf: number;
+  probs: Partial<Record<OutcomeKey, number>>;
+}
+
+const HISTORY_CAP = 240;
 
 /** Terminal state, reduced from server frames (client-only, in-memory — no browser storage, FR-41). */
 export interface TerminalState {
   connected: boolean;
   consensus: Map<string, ConsensusFrame>; // `${fixtureId}|${market}`
+  history: Map<string, HistoryPoint[]>; // `${fixtureId}|${market}` → session timeline
   feedStates: Map<string, FeedState>; // fixtureId
   positions: Map<string, ValuedPositionDto>; // positionRef
   events: MatchEventDto[];
   activity: ActivityEntry[];
   pendingRuleFire: RuleFiredFrame | null;
   subscribedFixtures: string[];
+  /** Bumped on RULE_FIRED/RULE_EXECUTED so rule views can refetch. */
+  ruleActivitySeq: number;
+  /** Local clock minus server clock from the WS HELLO frame; null before first connect. */
+  clockSkewMs: number | null;
 }
 
 export const initialState: TerminalState = {
   connected: false,
   consensus: new Map(),
+  history: new Map(),
   feedStates: new Map(),
   positions: new Map(),
   events: [],
   activity: [],
   pendingRuleFire: null,
   subscribedFixtures: [],
+  ruleActivitySeq: 0,
+  clockSkewMs: null,
 };
 
 export type Action =
   | { type: 'socket'; connected: boolean }
+  | { type: 'hello'; serverTime: number }
   | { type: 'consensus'; frame: ConsensusFrame }
   | { type: 'feedHealth'; fixtureId: string; state: FeedState }
   | { type: 'valuation'; dto: ValuedPositionDto }
@@ -42,10 +59,18 @@ export function reducer(state: TerminalState, action: Action): TerminalState {
   switch (action.type) {
     case 'socket':
       return { ...state, connected: action.connected };
+    case 'hello':
+      return { ...state, clockSkewMs: Date.now() - action.serverTime };
     case 'consensus': {
+      const key = `${action.frame.fixtureId}|${action.frame.market}`;
       const consensus = new Map(state.consensus);
-      consensus.set(`${action.frame.fixtureId}|${action.frame.market}`, action.frame);
-      return { ...state, consensus };
+      consensus.set(key, action.frame);
+      const history = new Map(state.history);
+      const line = history.get(key) ?? [];
+      if (line.length === 0 || line[line.length - 1]!.asOf !== action.frame.asOf) {
+        history.set(key, [...line, { asOf: action.frame.asOf, probs: action.frame.probs }].slice(-HISTORY_CAP));
+      }
+      return { ...state, consensus, history };
     }
     case 'feedHealth': {
       const previous = state.feedStates.get(action.fixtureId);
@@ -75,11 +100,11 @@ export function reducer(state: TerminalState, action: Action): TerminalState {
     }
     case 'ruleFired':
       return reducer(
-        { ...state, pendingRuleFire: action.frame },
+        { ...state, pendingRuleFire: action.frame, ruleActivitySeq: state.ruleActivitySeq + 1 },
         { type: 'log', kind: 'rule', text: `rule ${action.frame.template} fired (${action.frame.latencyMs}ms after event, packet ${action.frame.event.packetId})` },
       );
     case 'ruleExecuted':
-      return reducer(state, {
+      return reducer({ ...state, ruleActivitySeq: state.ruleActivitySeq + 1 }, {
         type: 'log',
         kind: 'lock',
         text: `⚡ delegated rule EXECUTED on-chain: ${action.frame.template} → ${action.frame.signature} (${action.frame.latencyMs}ms after event)`,

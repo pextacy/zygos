@@ -18,6 +18,12 @@ const envSchema = z.object({
   RPC_URL: z.string().url().optional(),
   CLUSTER: z.enum(['mainnet-beta', 'devnet']).default('devnet'),
   DATABASE_URL: z.string().default('./data/zygos.db'),
+  /**
+   * Comma-separated browser origins allowed by CORS (e.g. the Vercel URL).
+   * Unset ⇒ any origin: safe here because auth is per-request wallet
+   * signatures, never cookies — there is no ambient credential to steal.
+   */
+  WEB_ORIGIN: z.string().min(1).optional(),
   COMMITMENT_MEMO: z
     .enum(['true', 'false'])
     .default('true')

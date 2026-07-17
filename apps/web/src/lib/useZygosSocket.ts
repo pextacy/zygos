@@ -48,6 +48,9 @@ export function useZygosSocket(dispatch: (a: Action) => void, wallet: string | n
           return;
         }
         switch (frame.type) {
+          case 'HELLO':
+            dispatch({ type: 'hello', serverTime: frame.serverTime });
+            break;
           case 'CONSENSUS':
             dispatch({ type: 'consensus', frame });
             break;

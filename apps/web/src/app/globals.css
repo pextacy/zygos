@@ -3,5 +3,48 @@
 @tailwind utilities;
 
 body {
-  @apply bg-terminal-bg text-terminal-text antialiased;
+  @apply bg-background font-sans text-body-md text-on-background antialiased;
+}
+
+/* Focus halo per design system: indigo border + 10% primary ring. */
+input:focus-visible,
+button:focus-visible,
+a:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(67, 56, 202, 0.2);
+}
+
+/* Hide scrollbars in feed columns for the clean fintech look. */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Wallet adapter button, restyled to the design's primary button. */
+.wallet-adapter-button.wallet-adapter-button-trigger {
+  background: #2a14b4;
+  color: #ffffff;
+  font-family: 'JetBrains Mono', ui-monospace, monospace;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 20px;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 0.25rem;
+  transition: background-color 150ms ease;
+}
+.wallet-adapter-button.wallet-adapter-button-trigger:not([disabled]):hover {
+  background: #4338ca;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

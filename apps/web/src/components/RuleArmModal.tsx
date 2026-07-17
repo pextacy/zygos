@@ -6,6 +6,7 @@ import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { api } from '../lib/server';
 import type { RuleDto, ValuedPositionDto } from '../lib/types';
 import { buildWalletAuth, deserializeTx } from '../lib/wallet';
+import { IconClose } from './Icons';
 
 /** Arm a protective rule (FR-40/41): stored server-side, intent hash committed on-chain by the user's own signature. */
 export function RuleArmModal({
@@ -14,7 +15,7 @@ export function RuleArmModal({
   onLog,
 }: {
   dto: ValuedPositionDto;
-  onClose: () => void;
+  onClose: (armed?: boolean) => void;
   onLog: (kind: 'rule' | 'error', text: string) => void;
 }) {
   const { publicKey, signMessage, signTransaction, sendTransaction } = useWallet();
@@ -103,7 +104,7 @@ export function RuleArmModal({
       } else {
         onLog('error', 'rule armed without on-chain commitment (server has no RPC) — re-arm once RPC is configured');
       }
-      onClose();
+      onClose(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -112,55 +113,60 @@ export function RuleArmModal({
   }
 
   return (
-    <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/70 p-4" onClick={onClose}>
-      <div className="w-full max-w-sm rounded border border-terminal-border bg-terminal-panel p-4" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between">
-          <h3 className="text-xs uppercase tracking-widest text-terminal-dim">Arm rule — {dto.position.fixtureId} · {team}</h3>
-          <button onClick={onClose} className="text-terminal-dim hover:text-terminal-text">✕</button>
+    <div className="fixed inset-0 z-40 flex items-center justify-center bg-tertiary/40 p-4 backdrop-blur-sm" onClick={() => onClose()}>
+      <div className="w-full max-w-sm rounded-xl border border-outline-variant bg-surface-container-lowest p-5 shadow-float" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-surface-container-high pb-3">
+          <h3 className="text-title-md text-on-surface">Arm Rule</h3>
+          <button onClick={() => onClose()} aria-label="Close" className="rounded-full p-1 text-outline transition-colors hover:bg-surface-container-high hover:text-on-surface">
+            <IconClose className="h-4 w-4" />
+          </button>
         </div>
+        <p className="mt-2 font-mono text-label-sm text-outline">
+          {dto.position.fixtureId} · {team}
+        </p>
 
-        <div className="mt-3 space-y-2 text-sm">
-          <label className="flex items-center gap-2">
-            <input type="radio" checked={template === 'GOAL_LOCK'} onChange={() => setTemplate('GOAL_LOCK')} className="accent-terminal-accent" />
+        <div className="mt-4 space-y-2 text-body-md text-on-surface">
+          <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-outline-variant p-2.5 has-[:checked]:border-primary has-[:checked]:bg-primary-fixed/40">
+            <input type="radio" checked={template === 'GOAL_LOCK'} onChange={() => setTemplate('GOAL_LOCK')} className="accent-primary" />
             <span>
-              If <span className="text-terminal-accent">{team} scores</span>, prepare a {fraction}% lock
+              If <span className="font-semibold text-primary">{team} scores</span>, prepare a {fraction}% lock
             </span>
           </label>
-          <label className="flex items-center gap-2">
-            <input type="radio" checked={template === 'RED_CARD_REDUCE'} onChange={() => setTemplate('RED_CARD_REDUCE')} className="accent-terminal-accent" />
+          <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-outline-variant p-2.5 has-[:checked]:border-primary has-[:checked]:bg-primary-fixed/40">
+            <input type="radio" checked={template === 'RED_CARD_REDUCE'} onChange={() => setTemplate('RED_CARD_REDUCE')} className="accent-primary" />
             <span>
-              If <span className="text-terminal-danger">{team} gets a red card</span>, prepare a {fraction}% reduction
+              If <span className="font-semibold text-error">{team} gets a red card</span>, prepare a {fraction}% reduction
             </span>
           </label>
         </div>
 
-        <label className="mt-3 block text-xs text-terminal-dim">
-          Fraction: <span className="text-terminal-text">{fraction}%</span>
-          <input type="range" min={10} max={100} step={5} value={fraction} onChange={(e) => setFraction(Number(e.target.value))} className="mt-1 w-full accent-terminal-accent" />
+        <label className="mt-4 block text-label-sm text-outline">
+          Fraction: <span className="font-mono text-data-mono text-on-surface">{fraction}%</span>
+          <input type="range" min={10} max={100} step={5} value={fraction} onChange={(e) => setFraction(Number(e.target.value))} className="mt-2 w-full accent-primary" />
         </label>
 
-        <label className="mt-3 flex items-start gap-2 text-[11px] leading-4 text-terminal-dim">
-          <input type="checkbox" checked={delegated} onChange={(e) => setDelegated(e.target.checked)} className="mt-0.5 accent-terminal-accent" />
+        <label className="mt-4 flex items-start gap-2 text-body-sm leading-4 text-outline">
+          <input type="checkbox" checked={delegated} onChange={(e) => setDelegated(e.target.checked)} className="mt-0.5 accent-primary" />
           <span>
-            <span className="text-terminal-text">Delegate execution (v2):</span> pre-sign the exact lock now on a durable nonce; it is
+            <span className="font-semibold text-on-surface">Delegate execution (v2):</span> pre-sign the exact lock now on a durable nonce; it is
             submitted automatically when the event fires. The server can only ever land this one pre-agreed transaction.
           </span>
         </label>
 
-        <p className="mt-3 text-[11px] leading-4 text-terminal-dim">
+        <p className="mt-3 text-body-sm leading-4 text-outline">
           {delegated
             ? 'You sign once, up front, with slippage bounds baked in — nothing to tap at match time.'
             : 'Rules never auto-sign. When the event fires, a pre-built simulated transaction appears for one-tap signing — you stay in control.'}
         </p>
 
-        {error && <p className="mt-2 text-xs text-terminal-danger">{error}</p>}
+        {error && <p className="mt-3 text-body-sm text-error">{error}</p>}
 
         <button
           disabled={busy || !publicKey}
           onClick={arm}
-          className="mt-3 w-full rounded border border-terminal-accent py-2 text-sm uppercase tracking-widest text-terminal-accent enabled:hover:bg-terminal-accent enabled:hover:text-terminal-bg disabled:opacity-40"
+          className="mt-4 w-full rounded bg-primary py-2.5 font-mono text-data-mono text-on-primary transition-colors enabled:hover:bg-primary-container disabled:cursor-not-allowed disabled:opacity-40"
         >
-          {busy ? 'signing…' : 'Arm rule'}
+          {busy ? 'Signing…' : 'Arm Rule'}
         </button>
       </div>
     </div>

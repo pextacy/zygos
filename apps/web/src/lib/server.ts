@@ -14,6 +14,11 @@ export function httpBase(): string {
   return u.toString().replace(/\/$/, '');
 }
 
+/** Solana Explorer link for an on-chain signature, on the configured cluster. */
+export function explorerTxUrl(signature: string): string {
+  return `https://explorer.solana.com/tx/${signature}${CLUSTER === 'devnet' ? '?cluster=devnet' : ''}`;
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${httpBase()}${path}`, {
     ...init,

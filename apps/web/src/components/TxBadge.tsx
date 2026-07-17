@@ -7,10 +7,7 @@ import { clockTime } from '../lib/format';
 export function TxBadge({ packetIds, asOf }: { packetIds: string[]; asOf: number }) {
   const title = `TxLINE packets @ ${clockTime(asOf)}\n${packetIds.slice(0, 6).join('\n')}${packetIds.length > 6 ? `\n… +${packetIds.length - 6} more` : ''}`;
   return (
-    <span
-      title={title}
-      className="ml-1 inline-block cursor-help rounded border border-terminal-border px-1 text-[9px] uppercase tracking-wider text-terminal-dim align-middle"
-    >
+    <span title={title} className="ml-1.5 inline-block cursor-help rounded-full bg-primary-fixed px-2 py-px align-middle font-sans text-[10px] font-semibold tracking-[0.1em] text-primary">
       TxLINE
     </span>
   );
