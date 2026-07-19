@@ -274,7 +274,11 @@ export function SystemStatusCard({ health, phase = 'ok' }: { health: HealthDto |
             {tickAges.map(([fixtureId, ageMs]) => (
               <li key={fixtureId} className="flex items-baseline justify-between gap-2 font-mono text-data-mono">
                 <span className="truncate text-on-surface">{fixtureId}</span>
-                <span className={ageMs > 30_000 ? 'text-error' : 'text-on-surface-variant'}>{ageLabel(ageMs)} ago</span>
+                {Number.isFinite(ageMs) ? (
+                  <span className={ageMs > 30_000 ? 'text-error' : 'text-on-surface-variant'}>{ageLabel(ageMs)} ago</span>
+                ) : (
+                  <span className="text-on-surface-variant">awaiting first odds</span>
+                )}
               </li>
             ))}
           </ul>
