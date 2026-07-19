@@ -19,11 +19,32 @@ export function explorerTxUrl(signature: string): string {
   return `https://explorer.solana.com/tx/${signature}${CLUSTER === 'devnet' ? '?cluster=devnet' : ''}`;
 }
 
+/** Marks a network-level failure (server not reachable yet: cold start, offline, DNS) vs a real HTTP error response. */
+export class TransportError extends Error {
+  constructor(cause: unknown) {
+    super(cause instanceof Error ? cause.message : String(cause));
+    this.name = 'TransportError';
+  }
+}
+
+/** True when the failure is "server not reachable yet" (transient) rather than a real server-side error. */
+export function isTransient(err: unknown): boolean {
+  return err instanceof TransportError;
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${httpBase()}${path}`, {
-    ...init,
-    headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${httpBase()}${path}`, {
+      ...init,
+      headers: { 'content-type': 'application/json', ...(init?.headers ?? {}) },
+    });
+  } catch (cause) {
+    // fetch() rejects only on transport failure (server down / cold start /
+    // offline), never on an HTTP error status — classify it so callers can
+    // treat it as a benign "connecting…" instead of a hard error.
+    throw new TransportError(cause);
+  }
   const body: unknown = await res.json().catch(() => ({}));
   if (!res.ok) {
     const message = typeof body === 'object' && body !== null && 'error' in body ? String((body as { error: unknown }).error) : `HTTP ${res.status}`;

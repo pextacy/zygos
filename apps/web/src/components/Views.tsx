@@ -274,6 +274,7 @@ export function AnalyticsView({
   feedStates,
   events,
   health,
+  healthPhase,
   onExplain,
   onLog,
 }: {
@@ -281,6 +282,7 @@ export function AnalyticsView({
   feedStates: Map<string, FeedState>;
   events: MatchEventDto[];
   health: HealthDto | null;
+  healthPhase: 'loading' | 'ok' | 'unreachable';
   onExplain: (frame: ConsensusFrame) => void;
   onLog: (kind: 'info' | 'error', text: string) => void;
 }) {
@@ -294,7 +296,7 @@ export function AnalyticsView({
       </p>
 
       <div className="mt-6">
-        <SystemStatusCard health={health} />
+        <SystemStatusCard health={health} phase={healthPhase} />
       </div>
 
       <div className="mt-6 rounded-xl border border-outline-variant bg-surface-container-lowest shadow-sm">
@@ -317,7 +319,7 @@ export function AnalyticsView({
               </thead>
               <tbody>
                 {frames.map((frame) => {
-                  const state = feedStates.get(frame.fixtureId) ?? 'STALE';
+                  const state = feedStates.get(frame.fixtureId) ?? 'PENDING';
                   return (
                     <tr key={`${frame.fixtureId}|${frame.market}`} className="border-t border-surface-container-low align-top">
                       <td className="py-2.5 pr-4">

@@ -174,7 +174,7 @@ app.get('/fixtures', async (_req, reply) => {
   return {
     fixtures: feed.subscribedFixtures().map((fixtureId) => ({
       fixtureId,
-      state: states[fixtureId] ?? 'STALE',
+      state: states[fixtureId] ?? 'PENDING',
       markets: feed
         .snapshots(now)
         .filter((s) => s.fixtureId === fixtureId)

@@ -75,6 +75,10 @@ export function useZygosSocket(dispatch: (a: Action) => void, wallet: string | n
           case 'ERROR':
             dispatch({ type: 'log', kind: 'error', text: `server: ${frame.code}${frame.detail ? ` — ${frame.detail}` : ''}` });
             break;
+          case 'NOTICE':
+            // Expected capability/config notice (e.g. feed-only deploy) — informational, not a fault.
+            dispatch({ type: 'log', kind: 'info', text: frame.detail ?? frame.code });
+            break;
           default:
             break;
         }

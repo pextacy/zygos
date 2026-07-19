@@ -4,7 +4,8 @@
  */
 
 export type OutcomeKey = 'HOME' | 'DRAW' | 'AWAY' | 'OVER' | 'UNDER';
-export type FeedState = 'LIVE' | 'DEGRADED' | 'STALE';
+/** PENDING = subscribed but no odds yet (pre-match/idle) — benign; STALE = was live, then went stale (a fault). */
+export type FeedState = 'LIVE' | 'DEGRADED' | 'STALE' | 'PENDING';
 
 export interface ConsensusFrame {
   type: 'CONSENSUS';
@@ -178,6 +179,7 @@ export type ServerFrame =
   | { type: 'HELLO'; serverTime: number }
   | { type: 'SUBSCRIBED'; fixtureIds: string[] }
   | { type: 'ERROR'; code: string; detail?: string }
+  | { type: 'NOTICE'; code: string; detail?: string }
   | ConsensusFrame
   | EventFrame
   | FeedHealthFrame

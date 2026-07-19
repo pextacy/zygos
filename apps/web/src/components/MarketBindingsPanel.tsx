@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { clockTime } from '../lib/format';
-import { api } from '../lib/server';
+import { api, isTransient } from '../lib/server';
 import type { BindingCandidatesDto, MarketBindingDto } from '../lib/types';
 import { buildWalletAuth } from '../lib/wallet';
 
@@ -46,7 +46,7 @@ export function MarketBindingsPanel({ onLog }: { onLog: (kind: 'info' | 'error',
         setAdminRestricted(b.adminRestricted);
         setCandidates(c);
       })
-      .catch((err: Error) => setError(err.message))
+      .catch((err: unknown) => setError(isTransient(err) ? 'connecting…' : err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
   }, []);
 
@@ -203,7 +203,11 @@ export function MarketBindingsPanel({ onLog }: { onLog: (kind: 'info' | 'error',
 
       <div className="overflow-x-auto p-4 pt-0">
         {loading && bindings.length === 0 && <p className="pt-4 text-body-md text-outline">Loading bindings…</p>}
-        {error && <p className="pt-4 text-body-md text-error">bindings unavailable: {error}</p>}
+        {error === 'connecting…' ? (
+          <p className="pt-4 text-body-md text-outline">Connecting to server…</p>
+        ) : (
+          error && <p className="pt-4 text-body-md text-error">bindings unavailable: {error}</p>
+        )}
         {!loading && !error && bindings.length === 0 && (
           <p className="pt-4 text-body-md text-outline">No bindings yet — positions on venue markets stay UNMAPPED (never mis-valued) until bound.</p>
         )}

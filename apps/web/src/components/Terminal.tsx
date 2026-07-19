@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useReducer, useState } from 'react';
 import { useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import pkg from '../../package.json';
-import { api, CLUSTER } from '../lib/server';
+import { api, CLUSTER, isTransient } from '../lib/server';
 import { unmappedMarketIdOf } from '../lib/positions';
 import { initialState, reducer } from '../lib/store';
 import type { ConsensusFrame, FixtureDto, HedgePreviewDto, RuleFiredFrame, ValuedPositionDto } from '../lib/types';
@@ -59,7 +59,7 @@ export function Terminal() {
   const [headerSearch, setHeaderSearch] = useState('');
 
   useZygosSocket(dispatch, wallet, watched);
-  const health = useHealth();
+  const { health, phase: healthPhase } = useHealth();
 
   // Bootstrap from the server's already-subscribed fixtures so a reload doesn't start with an empty board.
   useEffect(() => {
@@ -74,7 +74,13 @@ export function Terminal() {
           }
         }
       })
-      .catch((err: Error) => dispatch({ type: 'log', kind: 'info', text: `fixtures unavailable: ${err.message}` }));
+      .catch((err: unknown) =>
+        dispatch({
+          type: 'log',
+          kind: 'info',
+          text: isTransient(err) ? 'waiting for server to come online…' : `fixtures unavailable: ${err instanceof Error ? err.message : String(err)}`,
+        }),
+      );
   }, []);
 
   // Initial + on-demand position load over HTTP; live updates then flow via VALUATION frames.
@@ -87,7 +93,13 @@ export function Terminal() {
         const fixtures = [...new Set(positions.map((p) => p.position.fixtureId).filter((f) => unmappedMarketIdOf(f) === null))];
         if (fixtures.length > 0) setWatched((w) => [...new Set([...w, ...fixtures])]);
       })
-      .catch((err: Error) => dispatch({ type: 'log', kind: 'error', text: `positions: ${err.message}` }))
+      .catch((err: unknown) =>
+        dispatch(
+          isTransient(err)
+            ? { type: 'log', kind: 'info', text: 'waiting for server to load positions…' }
+            : { type: 'log', kind: 'error', text: `positions: ${err instanceof Error ? err.message : String(err)}` },
+        ),
+      )
       .finally(() => setLoadingPositions(false));
   }, [wallet]);
 
@@ -113,12 +125,21 @@ export function Terminal() {
 
   // Quick Execute: open Lock In on the largest currently lockable position.
   const quickTarget = useMemo(() => {
-    const lockable = positions.filter((p) => p.state === 'OK' && (state.feedStates.get(p.position.fixtureId) ?? 'STALE') !== 'STALE' && p.valuation !== null);
+    const lockable = positions.filter((p) => p.state === 'OK' && (state.feedStates.get(p.position.fixtureId) ?? 'PENDING') !== 'STALE' && p.valuation !== null);
     return lockable.sort((a, b) => (BigInt(b.valuation?.fairValue ?? '0') > BigInt(a.valuation?.fairValue ?? '0') ? 1 : -1))[0] ?? null;
   }, [positions, state.feedStates]);
 
   const ruleFire: RuleFiredFrame | null = state.pendingRuleFire;
   const rulesKey = rulesRefresh + state.ruleActivitySeq;
+
+  // Tri-state server link: before the first open it's a neutral "Connecting…"
+  // (incl. a Render cold start), not a red "Offline" fault. Red only after a
+  // live socket has dropped and is reconnecting.
+  const linkTone = state.connected
+    ? { text: 'text-positive', dot: 'bg-positive', pulse: '', label: 'Live', title: 'Server link live' }
+    : state.everConnected
+      ? { text: 'text-error', dot: 'bg-error', pulse: '', label: 'Reconnecting…', title: 'Server link dropped — reconnecting' }
+      : { text: 'text-on-surface-variant', dot: 'bg-outline', pulse: 'animate-pulse', label: 'Connecting…', title: 'Connecting to server…' };
 
   const navLink = (item: (typeof NAV)[number], base: string) => (
     <button
@@ -166,11 +187,11 @@ export function Terminal() {
               </div>
             </form>
             <span
-              className={`flex items-center gap-1.5 whitespace-nowrap text-label-sm ${state.connected ? 'text-positive' : 'text-error'}`}
-              title={state.connected ? 'Server link live' : 'Server link offline'}
+              className={`flex items-center gap-1.5 whitespace-nowrap text-label-sm ${linkTone.text}`}
+              title={linkTone.title}
             >
-              <span className={`h-2 w-2 rounded-full ${state.connected ? 'bg-positive' : 'bg-error'}`} />
-              <span className="hidden sm:inline">{state.connected ? 'Live' : 'Offline'}</span>
+              <span className={`h-2 w-2 rounded-full ${linkTone.dot} ${linkTone.pulse}`} />
+              <span className="hidden sm:inline">{linkTone.label}</span>
             </span>
             <WalletMultiButton />
           </div>
@@ -264,6 +285,7 @@ export function Terminal() {
                   <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
                     <FeedMetricsCard
                       connected={state.connected}
+                      everConnected={state.everConnected}
                       fixtures={state.feedStates.size}
                       markets={state.consensus.size}
                       eventsSeen={state.events.length}
@@ -326,7 +348,7 @@ export function Terminal() {
 
           {view === 'analytics' && (
             <div className="h-full overflow-y-auto">
-              <AnalyticsView consensus={state.consensus} feedStates={state.feedStates} events={state.events} health={health} onExplain={setExplain} onLog={onLog} />
+              <AnalyticsView consensus={state.consensus} feedStates={state.feedStates} events={state.events} health={health} healthPhase={healthPhase} onExplain={setExplain} onLog={onLog} />
             </div>
           )}
         </main>

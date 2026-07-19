@@ -71,5 +71,7 @@ console.log(`watching ${fixtureId} via ${env.TXLINE_ORIGIN} — Ctrl-C to stop`)
 setInterval(() => {
   const states = feedService.feedStates();
   const state = states[fixtureId];
-  if (state && state !== 'LIVE') console.warn(`[health] feed ${state} for ${fixtureId}`);
+  // PENDING (no odds yet — pre-match/idle) is benign; only DEGRADED/STALE are faults.
+  if (state === 'PENDING') console.log(`[health] awaiting first odds for ${fixtureId} (feed connected, no ticks yet)`);
+  else if (state && state !== 'LIVE') console.warn(`[health] feed ${state} for ${fixtureId}`);
 }, 10_000);

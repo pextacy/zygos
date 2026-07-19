@@ -11,6 +11,8 @@ const HISTORY_CAP = 240;
 /** Terminal state, reduced from server frames (client-only, in-memory — no browser storage, FR-41). */
 export interface TerminalState {
   connected: boolean;
+  /** True once the socket has opened at least once — distinguishes the initial "Connecting…" from a "reconnecting" drop. */
+  everConnected: boolean;
   consensus: Map<string, ConsensusFrame>; // `${fixtureId}|${market}`
   history: Map<string, HistoryPoint[]>; // `${fixtureId}|${market}` → session timeline
   feedStates: Map<string, FeedState>; // fixtureId
@@ -29,6 +31,7 @@ export interface TerminalState {
 
 export const initialState: TerminalState = {
   connected: false,
+  everConnected: false,
   consensus: new Map(),
   history: new Map(),
   feedStates: new Map(),
@@ -61,7 +64,7 @@ let logSeq = 0;
 export function reducer(state: TerminalState, action: Action): TerminalState {
   switch (action.type) {
     case 'socket':
-      return { ...state, connected: action.connected };
+      return { ...state, connected: action.connected, everConnected: state.everConnected || action.connected };
     case 'hello':
       return { ...state, clockSkewMs: Date.now() - action.serverTime };
     case 'consensus': {
@@ -80,8 +83,10 @@ export function reducer(state: TerminalState, action: Action): TerminalState {
       const feedStates = new Map(state.feedStates);
       feedStates.set(action.fixtureId, action.state);
       const next = { ...state, feedStates };
-      if (previous !== action.state && action.state !== 'LIVE') {
-        return reducer(next, { type: 'log', kind: 'feed', text: `feed ${action.state} for fixture ${action.fixtureId}` });
+      // Only log genuine feed faults (STALE/DEGRADED after being live). PENDING
+      // is the benign "no odds yet" state and must not spam the activity log.
+      if (previous !== action.state && (action.state === 'STALE' || action.state === 'DEGRADED')) {
+        return reducer(next, { type: 'log', kind: 'feed', text: `feed ${action.state.toLowerCase()} for fixture ${action.fixtureId}` });
       }
       return next;
     }

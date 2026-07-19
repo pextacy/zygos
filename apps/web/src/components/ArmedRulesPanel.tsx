@@ -4,7 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { PublicKey } from '@solana/web3.js';
 import { clockTime, ppmPct } from '../lib/format';
-import { api } from '../lib/server';
+import { api, isTransient } from '../lib/server';
 import type { RuleDto } from '../lib/types';
 import { buildWalletAuth, deserializeTx, isNonceAdvanceFor } from '../lib/wallet';
 
@@ -47,7 +47,9 @@ export function useArmedRules(wallet: string | null, refreshKey: number, onLog: 
     setLoading(true);
     api<{ rules: RuleDto[] }>(`/rules/${wallet}`)
       .then(({ rules: list }) => setRules(list))
-      .catch((err: Error) => onLog('error', `rules: ${err.message}`))
+      .catch((err: unknown) => {
+        if (!isTransient(err)) onLog('error', `rules: ${err instanceof Error ? err.message : String(err)}`);
+      })
       .finally(() => setLoading(false));
   }, [wallet, onLog]);
 

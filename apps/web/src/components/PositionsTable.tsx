@@ -79,7 +79,7 @@ export function PositionsTable({
             </thead>
             <tbody>
               {positions.map((dto) => {
-                const feedState = feedStates.get(dto.position.fixtureId) ?? 'STALE';
+                const feedState = feedStates.get(dto.position.fixtureId) ?? 'PENDING';
                 const stale = dto.state === 'STALE' || feedState === 'STALE';
                 const lockable = dto.state === 'OK' && !stale;
                 const unmappedId = unmappedMarketIdOf(dto.position.fixtureId);
@@ -138,8 +138,13 @@ export function PositionsTable({
                           <span className="rounded-sm bg-surface-variant px-1.5 py-0.5 font-mono text-label-sm text-secondary">NO CONSENSUS</span>
                           <div className="mt-1 text-label-sm text-outline">no TxLINE snapshot for this market yet — watch its fixture in the Match Feed</div>
                         </div>
+                      ) : dto.state === 'STALE' ? (
+                        <div>
+                          <span className="rounded-sm bg-surface-variant px-1.5 py-0.5 font-mono text-label-sm text-secondary">FEED IDLE</span>
+                          <div className="mt-1 text-label-sm text-outline">last odds are past the freshness window — awaiting a fresh TxLINE frame (lock-in paused)</div>
+                        </div>
                       ) : (
-                        <span className="font-mono text-data-mono text-error">{dto.state}</span>
+                        <span className="font-mono text-data-mono text-secondary">{dto.state}</span>
                       )}
                     </td>
                     <td className="py-3 pr-4 font-mono text-data-mono">
@@ -152,7 +157,7 @@ export function PositionsTable({
                           onClick={() => onLockIn(dto)}
                           title={
                             stale
-                              ? 'Feed stale — lock-in disabled (FR-14)'
+                              ? 'Feed idle — awaiting fresh odds; lock-in paused until the price is current (FR-14)'
                               : dto.state === 'UNMAPPED_OUTCOME'
                                 ? 'Venue market not bound to a TxLINE fixture — bind it in Analytics → Market Bindings'
                                 : dto.state === 'NO_CONSENSUS'

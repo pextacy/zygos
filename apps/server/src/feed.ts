@@ -5,6 +5,7 @@ import {
   inferFromSnapshot,
   marketKeyString,
   snapshot,
+  STALENESS_THRESHOLD_MS,
   type ConsensusSnapshot,
   type MarketConsensusState,
   type MatchEvent,
@@ -20,10 +21,19 @@ export interface FeedLogger {
   error(obj: object, msg?: string): void;
 }
 
-export type FeedState = 'LIVE' | 'DEGRADED' | 'STALE';
+/**
+ * PENDING = subscribed but no tick has EVER arrived (pre-match / just-subscribed
+ * / idle feed) — a benign waiting state, not a fault. STALE = ticks were flowing
+ * and then stopped past the freshness window (a real problem). Keeping these
+ * distinct stops a healthy pre-match feed from reading as broken.
+ */
+export type FeedState = 'LIVE' | 'DEGRADED' | 'STALE' | 'PENDING';
 
 const DEGRADED_AFTER_MS = 10_000;
-const STALE_AFTER_MS = 30_000; // FR-14
+// Align the STALE boundary with core's valuation gate (FeedStaleError fires on
+// `> STALENESS_THRESHOLD_MS`), so the badge and the valuation never disagree at
+// the exact boundary tick.
+const STALE_AFTER_MS = STALENESS_THRESHOLD_MS; // FR-14
 
 /** Subscription endpoints are unauthenticated; cap total tracked fixtures so anonymous clients can't grow state/upstream polling without bound. */
 const MAX_SUBSCRIBED_FIXTURES = 200;
@@ -144,7 +154,13 @@ export class FeedService {
     const health = this.adapter.health();
     const out: Record<string, FeedState> = {};
     for (const [fixtureId, ageMs] of Object.entries(health.lastTickAgeMs)) {
-      out[fixtureId] = ageMs < DEGRADED_AFTER_MS ? 'LIVE' : ageMs < STALE_AFTER_MS ? 'DEGRADED' : 'STALE';
+      out[fixtureId] = !Number.isFinite(ageMs)
+        ? 'PENDING' // never ticked — waiting for the first odds, not stale
+        : ageMs < DEGRADED_AFTER_MS
+          ? 'LIVE'
+          : ageMs <= STALE_AFTER_MS
+            ? 'DEGRADED'
+            : 'STALE';
     }
     return out;
   }

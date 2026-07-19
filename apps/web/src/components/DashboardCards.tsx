@@ -201,6 +201,7 @@ export function ConsensusChartCard({
 /** Live feed/session metrics — every value observed this session, none synthetic. */
 export function FeedMetricsCard({
   connected,
+  everConnected,
   fixtures,
   markets,
   eventsSeen,
@@ -209,6 +210,7 @@ export function FeedMetricsCard({
   clockSkewMs,
 }: {
   connected: boolean;
+  everConnected: boolean;
   fixtures: number;
   markets: number;
   eventsSeen: number;
@@ -217,11 +219,17 @@ export function FeedMetricsCard({
   clockSkewMs: number | null;
 }) {
   const feedHost = originHost(health?.txline.origin);
+  // Same tri-state as the header: neutral "Connecting…" before the first open.
+  const link = connected
+    ? { value: 'Live', tone: 'primary' as const }
+    : everConnected
+      ? { value: 'Reconnecting…', tone: 'error' as const }
+      : { value: 'Connecting…', tone: undefined };
   return (
     <div className="rounded-xl border border-outline-variant bg-surface-container-lowest p-4 shadow-sm md:p-6">
       <h3 className="mb-4 border-b border-surface-container-high pb-2 text-title-md text-on-surface">Feed Metrics</h3>
       <div className="grid grid-cols-2 gap-4">
-        <Metric label="Server link" value={connected ? 'Live' : 'Offline'} tone={connected ? 'primary' : 'error'} />
+        <Metric label="Server link" value={link.value} tone={link.tone} />
         <Metric label="TxLINE feed" value={feedLabel(health)} tone={feedTone(health)} />
         <Metric label="Feed origin" value={feedHost ?? '—'} />
         <Metric label="RPC" value={health ? (health.rpc.configured ? health.rpc.cluster : 'not configured') : cluster} />
@@ -235,19 +243,23 @@ export function FeedMetricsCard({
 }
 
 /** Full server diagnostics from GET /healthz (analytics view). */
-export function SystemStatusCard({ health }: { health: HealthDto | null }) {
+export function SystemStatusCard({ health, phase = 'ok' }: { health: HealthDto | null; phase?: 'loading' | 'ok' | 'unreachable' }) {
   const tickAges = Object.entries(health?.feed.lastTickAgeMs ?? {});
+  // Distinguish "still loading" (neutral) from "genuinely unreachable" (red) —
+  // never flash red on the initial poll or one transient blip.
+  const statusChip =
+    phase === 'loading'
+      ? { text: 'Checking…', cls: 'bg-surface-container-high text-on-surface-variant' }
+      : phase === 'unreachable'
+        ? { text: 'server unreachable', cls: 'bg-error-container text-on-error-container' }
+        : health?.status === 'ok'
+          ? { text: 'ok', cls: 'bg-secondary-container text-on-secondary-container' }
+          : { text: 'feed not configured', cls: 'bg-surface-variant text-secondary' };
   return (
     <div className="rounded-xl border border-outline-variant bg-surface-container-lowest shadow-sm">
       <div className="flex items-center justify-between border-b border-surface-container-high p-4">
         <h3 className="text-title-md text-on-surface">System Status</h3>
-        {health ? (
-          <span className={`rounded-full px-2 py-0.5 text-label-sm ${health.status === 'ok' ? 'bg-secondary-container text-on-secondary-container' : 'bg-error-container text-on-error-container'}`}>
-            {health.status === 'ok' ? 'ok' : 'feed not configured'}
-          </span>
-        ) : (
-          <span className="rounded-full bg-error-container px-2 py-0.5 text-label-sm text-on-error-container">server unreachable</span>
-        )}
+        <span className={`rounded-full px-2 py-0.5 text-label-sm ${statusChip.cls}`}>{statusChip.text}</span>
       </div>
       <div className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-4">
         <Metric label="TxLINE feed" value={feedLabel(health)} tone={feedTone(health)} />

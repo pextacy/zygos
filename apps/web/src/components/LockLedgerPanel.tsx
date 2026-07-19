@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { clockTime, ppmPct, signedPts, usd } from '../lib/format';
-import { api, explorerTxUrl } from '../lib/server';
+import { api, explorerTxUrl, isTransient } from '../lib/server';
 import type { LockRecordDto, LockStatsDto } from '../lib/types';
 import { TxBadge } from './TxBadge';
 
@@ -72,7 +72,7 @@ export function LockLedgerPanel({ wallet, refreshKey }: { wallet: string | null;
         setLocks(res.locks);
         setStats(res.stats);
       })
-      .catch((err: Error) => setError(err.message))
+      .catch((err: unknown) => setError(isTransient(err) ? 'connecting…' : err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
   }, [wallet, refreshKey]);
 
@@ -116,7 +116,11 @@ export function LockLedgerPanel({ wallet, refreshKey }: { wallet: string | null;
       <div className="overflow-x-auto p-4 pt-0">
         {!wallet && <p className="pt-4 text-body-md text-outline">Connect a wallet to see your executed locks.</p>}
         {wallet && loading && locks.length === 0 && <p className="pt-4 text-body-md text-outline">Loading history…</p>}
-        {wallet && error && <p className="pt-4 text-body-md text-error">ledger unavailable: {error}</p>}
+        {wallet && error === 'connecting…' ? (
+          <p className="pt-4 text-body-md text-outline">Connecting to server…</p>
+        ) : (
+          wallet && error && <p className="pt-4 text-body-md text-error">ledger unavailable: {error}</p>
+        )}
         {wallet && !loading && !error && locks.length === 0 && (
           <p className="pt-4 text-body-md text-outline">No executed locks yet — this ledger records every verified lock with the edge it captured.</p>
         )}

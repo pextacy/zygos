@@ -41,6 +41,14 @@ export interface TxLineAdapterOptions {
 
 const BACKOFF_START_MS = 1_000;
 const BACKOFF_CAP_MS = 30_000;
+
+/** Sentinel for a cleanly-ended SSE stream (routine reconnect, not a fault). */
+class StreamEnded extends Error {
+  constructor() {
+    super('stream ended');
+    this.name = 'StreamEnded';
+  }
+}
 const GUEST_AUTH_PATH = '/auth/guest/start';
 
 const guestAuthResponseSchema = z.object({ token: z.string().min(1) }).passthrough();
@@ -124,8 +132,14 @@ export class TxLineAdapter implements OddsFeedAdapter {
     // `connected` = transport up (SSE loop running). It must NOT depend on
     // event freshness: pre-match the stream is open but idle (no odds yet), and
     // gating it on recent events would falsely report the feed as disconnected.
-    // Data freshness is a separate signal (`streaming` + per-fixture STALE).
-    const streaming = this.streams.odds.lastEventAt !== null && now - this.streams.odds.lastEventAt < 60_000;
+    //
+    // `streaming` must reflect actual ODDS delivery, not `lastEventAt` (which is
+    // bumped by heartbeats and the initial connect too) — otherwise a
+    // connected-but-idle feed would falsely claim odds are flowing. Derive it
+    // from the freshest real tick timestamp.
+    let freshestTick = 0;
+    for (const ts of this.lastTickTs.values()) if (ts > freshestTick) freshestTick = ts;
+    const streaming = freshestTick > 0 && now - freshestTick < 60_000;
     return { connected: this.connected, streaming, lastTickAgeMs };
   }
 
@@ -245,11 +259,16 @@ export class TxLineAdapter implements OddsFeedAdapter {
           await this.consumeSse(kind, res.body, state);
           // A cleanly ended stream still backs off before reconnecting — a
           // server that accepts and immediately closes must not be hammered.
-          throw new Error('stream ended');
+          throw new StreamEnded();
         } catch (err) {
           if (!this.connected) break;
           state.backoffMs = state.backoffMs === 0 ? BACKOFF_START_MS : Math.min(state.backoffMs * 2, BACKOFF_CAP_MS);
-          this.onParseError?.({ fixtureId: '*', reason: `${kind} stream error, retrying in ${state.backoffMs}ms: ${err instanceof Error ? err.message : String(err)}` });
+          // A clean end (server rotating a long-lived SSE connection) is a
+          // routine reconnect, not a fault — don't cry wolf on the error channel
+          // that also carries genuine parse/HTTP failures.
+          if (!(err instanceof StreamEnded)) {
+            this.onParseError?.({ fixtureId: '*', reason: `${kind} stream error, retrying in ${state.backoffMs}ms: ${err instanceof Error ? err.message : String(err)}` });
+          }
           await new Promise((r) => setTimeout(r, state.backoffMs));
         }
       }

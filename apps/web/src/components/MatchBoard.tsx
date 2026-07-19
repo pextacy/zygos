@@ -25,7 +25,7 @@ export function MatchBoard({
 }) {
   const [filter, setFilter] = useState<Filter>('all');
   const all = [...consensus.values()].sort((a, b) => a.fixtureId.localeCompare(b.fixtureId) || a.market.localeCompare(b.market));
-  const frames = filter === 'live' ? all.filter((f) => (feedStates.get(f.fixtureId) ?? 'STALE') === 'LIVE') : all;
+  const frames = filter === 'live' ? all.filter((f) => (feedStates.get(f.fixtureId) ?? 'PENDING') === 'LIVE') : all;
 
   const chip = (id: Filter, label: string) => (
     <button
@@ -53,7 +53,7 @@ export function MatchBoard({
         {all.length > 0 && frames.length === 0 && <p className="px-1 text-body-sm text-outline">No live markets right now.</p>}
         {frames.map((frame) => {
           const key = `${frame.fixtureId}|${frame.market}`;
-          const state = feedStates.get(frame.fixtureId) ?? 'STALE';
+          const state = feedStates.get(frame.fixtureId) ?? 'PENDING';
           const selected = key === selectedKey;
           // Lead outcome = the one the consensus currently favors.
           const entries = Object.entries(frame.probs);

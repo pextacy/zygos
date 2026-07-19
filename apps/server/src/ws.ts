@@ -111,7 +111,9 @@ export function attachWs(
             for (const l of valuationListeners) valuation?.removeListener(l);
             valuationListeners.length = 0;
             if (valuation === null) {
-              socket.send(JSON.stringify({ type: 'ERROR', code: 'NO_VENUE_ADAPTER', detail: 'no venue configured — positions cannot be valued' }));
+              // Expected on a feed-only deployment (no JUPITER_API_KEY) — a
+              // capability notice, not a fault, so it isn't rendered red.
+              socket.send(JSON.stringify({ type: 'NOTICE', code: 'NO_VENUE_ADAPTER', detail: 'no venue configured on this deployment — positions cannot be valued' }));
             } else {
               const listener: ValuationListener = {
                 wallet: frame.data.wallet,
