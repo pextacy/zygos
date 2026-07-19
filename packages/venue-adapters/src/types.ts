@@ -11,7 +11,10 @@ import type { MarketKey, MatchEvent, OddsTick } from '@zygos/core';
 export type { MatchEvent, OddsTick } from '@zygos/core';
 
 export interface FeedHealth {
+  /** Transport is up: the SSE stream is established and its loop is running (independent of whether events are currently flowing). */
   connected: boolean;
+  /** Odds events have arrived recently (within the freshness window). False pre-match when the stream is open but idle. */
+  streaming: boolean;
   /** Per subscribed fixtureId: ms since last tick. Drives STALE lockout (FR-14). */
   lastTickAgeMs: Record<string, number>;
 }

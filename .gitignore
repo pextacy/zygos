@@ -23,3 +23,5 @@ docs/session-logs/
 # misc
 .DS_Store
 coverage/
+.vercel
+.env*

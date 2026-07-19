@@ -121,8 +121,12 @@ export class TxLineAdapter implements OddsFeedAdapter {
       const ts = this.lastTickTs.get(id);
       lastTickAgeMs[id] = ts === undefined ? Number.POSITIVE_INFINITY : now - ts;
     }
-    const oddsAlive = this.streams.odds.lastEventAt !== null && now - this.streams.odds.lastEventAt < 60_000;
-    return { connected: this.connected && oddsAlive, lastTickAgeMs };
+    // `connected` = transport up (SSE loop running). It must NOT depend on
+    // event freshness: pre-match the stream is open but idle (no odds yet), and
+    // gating it on recent events would falsely report the feed as disconnected.
+    // Data freshness is a separate signal (`streaming` + per-fixture STALE).
+    const streaming = this.streams.odds.lastEventAt !== null && now - this.streams.odds.lastEventAt < 60_000;
+    return { connected: this.connected, streaming, lastTickAgeMs };
   }
 
   async disconnect(): Promise<void> {

@@ -67,6 +67,23 @@ function ProbabilityTimeline({ history }: { history: HistoryPoint[] }) {
   );
 }
 
+/**
+ * Honest TxLINE-feed status. `connected` is transport (SSE open); `streaming`
+ * is fresh odds within the window. Pre-match the stream is open but idle — that
+ * is "Connected · idle", NOT "Disconnected" (which would misread as a fault).
+ */
+function feedLabel(health: HealthDto | null): string {
+  if (!health) return '—';
+  if (!health.txline.configured) return 'Not configured';
+  if (!health.feed.connected) return 'Disconnected';
+  return health.feed.streaming ? 'Streaming' : 'Connected · idle';
+}
+function feedTone(health: HealthDto | null): 'primary' | 'error' | undefined {
+  if (!health) return undefined;
+  if (!health.txline.configured || !health.feed.connected) return 'error';
+  return 'primary';
+}
+
 function originHost(origin: string | undefined): string | null {
   if (!origin) return null;
   try {
@@ -205,11 +222,7 @@ export function FeedMetricsCard({
       <h3 className="mb-4 border-b border-surface-container-high pb-2 text-title-md text-on-surface">Feed Metrics</h3>
       <div className="grid grid-cols-2 gap-4">
         <Metric label="Server link" value={connected ? 'Live' : 'Offline'} tone={connected ? 'primary' : 'error'} />
-        <Metric
-          label="TxLINE feed"
-          value={health ? (health.feed.connected ? 'Connected' : health.txline.configured ? 'Disconnected' : 'Not configured') : '—'}
-          tone={health?.feed.connected ? 'primary' : health ? 'error' : undefined}
-        />
+        <Metric label="TxLINE feed" value={feedLabel(health)} tone={feedTone(health)} />
         <Metric label="Feed origin" value={feedHost ?? '—'} />
         <Metric label="RPC" value={health ? (health.rpc.configured ? health.rpc.cluster : 'not configured') : cluster} />
         <Metric label="Fixtures watched" value={String(fixtures)} />
@@ -237,7 +250,7 @@ export function SystemStatusCard({ health }: { health: HealthDto | null }) {
         )}
       </div>
       <div className="grid grid-cols-2 gap-4 p-4 sm:grid-cols-4">
-        <Metric label="TxLINE feed" value={health ? (health.feed.connected ? 'Connected' : 'Disconnected') : '—'} tone={health?.feed.connected ? 'primary' : 'error'} />
+        <Metric label="TxLINE feed" value={feedLabel(health)} tone={feedTone(health)} />
         <Metric label="Feed origin" value={originHost(health?.txline.origin) ?? '—'} />
         <Metric label="RPC" value={health ? (health.rpc.configured ? health.rpc.cluster : 'not configured') : '—'} />
         <Metric label="Audit DB" value={health ? (health.db.configured ? 'configured' : 'missing') : '—'} />

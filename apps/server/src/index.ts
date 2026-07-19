@@ -158,7 +158,7 @@ function hasBody(req: { body: unknown }): boolean {
 app.get('/healthz', async () => {
   return {
     status: feed ? 'ok' : 'feed-not-configured',
-    feed: feed ? { ...feed.health(), states: feed.feedStates() } : { connected: false, lastTickAgeMs: {} },
+    feed: feed ? { ...feed.health(), states: feed.feedStates() } : { connected: false, streaming: false, lastTickAgeMs: {} },
     rpc: { configured: env.RPC_URL !== undefined, cluster: env.CLUSTER },
     txline: { configured: env.TXLINE_API_TOKEN !== undefined, origin: env.TXLINE_ORIGIN },
     db: { configured: true },

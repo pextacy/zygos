@@ -188,7 +188,7 @@ export type ServerFrame =
 /** GET /healthz: server diagnostics — feed link, RPC, TxLINE config, DB. */
 export interface HealthDto {
   status: 'ok' | 'feed-not-configured';
-  feed: { connected: boolean; lastTickAgeMs: Record<string, number>; states?: Record<string, FeedState> };
+  feed: { connected: boolean; streaming?: boolean; lastTickAgeMs: Record<string, number>; states?: Record<string, FeedState> };
   rpc: { configured: boolean; cluster: string };
   txline: { configured: boolean; origin?: string };
   db: { configured: boolean };

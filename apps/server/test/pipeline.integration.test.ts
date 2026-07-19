@@ -32,7 +32,7 @@ class FakeFeedAdapter implements OddsFeedAdapter {
     this.eventCbs.push(cb);
   }
   health() {
-    return { connected: true, lastTickAgeMs: {} };
+    return { connected: true, streaming: true, lastTickAgeMs: {} };
   }
   async disconnect() {}
 
