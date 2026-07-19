@@ -97,6 +97,10 @@ if (env.TXLINE_API_TOKEN) {
   txlineAdapter = adapter;
   await adapter.connect();
   app.log.info({ origin: env.TXLINE_ORIGIN }, 'txline feed connected');
+  // Self-heal after a host restart (free-tier machines cycle): re-subscribe
+  // every fixture the operator had subscribed, so the live board comes back
+  // without anyone re-hitting /fixtures/subscribe.
+  await feed.restoreSubscriptions();
 } else {
   app.log.warn('TXLINE_API_TOKEN not set — feed disabled, no odds will be served. Run: pnpm -F server txline:activate');
 }

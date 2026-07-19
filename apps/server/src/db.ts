@@ -119,6 +119,16 @@ export const marketBindings = pgTable('market_bindings', {
   createdAt: bigint('created_at', { mode: 'number' }).notNull(),
 });
 
+/**
+ * Fixtures the operator has subscribed the feed to. Persisted so a restart
+ * (e.g. a free-tier host cycling the machine) restores the live board on boot
+ * instead of leaving the feed connected-but-silent until someone re-subscribes.
+ */
+export const subscriptions = pgTable('subscriptions', {
+  fixtureId: text('fixture_id').primaryKey(),
+  createdAt: bigint('created_at', { mode: 'number' }).notNull(),
+});
+
 /** Every rule firing, with the triggering TxLINE packet reference (FR-43). */
 export const ruleFirings = pgTable('rule_firings', {
   id: text('id').primaryKey(),
@@ -218,6 +228,10 @@ const MIGRATION_STATEMENTS = [
     created_at BIGINT NOT NULL,
     status TEXT NOT NULL,
     submitted_sig TEXT
+  )`,
+  `CREATE TABLE IF NOT EXISTS subscriptions (
+    fixture_id TEXT PRIMARY KEY,
+    created_at BIGINT NOT NULL
   )`,
 ];
 

@@ -11,7 +11,7 @@ import {
   type OddsTick,
 } from '@zygos/core';
 import type { OddsFeedAdapter } from '@zygos/venue-adapters';
-import { packets, rawPackets, type Db } from './db.js';
+import { packets, rawPackets, subscriptions, type Db } from './db.js';
 
 /** Structural subset of pino/fastify loggers — lets the CLI pass a console-backed one. */
 export interface FeedLogger {
@@ -96,7 +96,27 @@ export class FeedService {
     }
     await this.adapter.subscribe(fresh);
     for (const id of fresh) this.subscribed.add(id);
+    // Persist so a host restart restores the live board on boot (see restore()).
+    const now = Date.now();
+    void this.db
+      .insert(subscriptions)
+      .values(fresh.map((fixtureId) => ({ fixtureId, createdAt: now })))
+      .onConflictDoNothing()
+      .catch((err: unknown) => this.log.error({ err }, 'subscription persist failed'));
     this.log.info({ fixtureIds: fresh }, 'subscribed fixtures');
+  }
+
+  /** Re-subscribe every persisted fixture — called once on boot so a restart is self-healing. */
+  async restoreSubscriptions(): Promise<void> {
+    const rows = await this.db.select().from(subscriptions);
+    const ids = rows.map((r) => r.fixtureId);
+    if (ids.length === 0) return;
+    try {
+      await this.subscribe(ids);
+      this.log.info({ count: ids.length }, 'restored persisted fixture subscriptions on boot');
+    } catch (err) {
+      this.log.error({ err: err instanceof Error ? err.message : String(err) }, 'subscription restore failed');
+    }
   }
 
   addListener(l: FeedListeners): void {
