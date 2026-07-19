@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
 import { pct, signedPts, usd } from '../lib/format';
-import { api } from '../lib/server';
+import { api, isTransient } from '../lib/server';
 import type { HedgePreviewDto, ValuedPositionDto } from '../lib/types';
 import { buildWalletAuth, deserializeTx } from '../lib/wallet';
 import { IconClose } from './Icons';
@@ -49,10 +49,10 @@ export function LockInModal({
           setPreview(p);
           setQuotedFraction(f);
         })
-        .catch((err: Error) => {
+        .catch((err: unknown) => {
           setPreview(null);
           setQuotedFraction(null);
-          setError(err.message);
+          setError(isTransient(err) ? 'server unreachable — try again in a moment' : err instanceof Error ? err.message : String(err));
         })
         .finally(() => setBusy(null));
     },

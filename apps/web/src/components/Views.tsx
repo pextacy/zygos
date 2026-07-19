@@ -333,7 +333,7 @@ export function AnalyticsView({
                       </td>
                       <td className="py-2.5 pr-4 font-mono text-data-mono text-on-surface">
                         {frame.bookCount}
-                        {frame.confidence === 'LOW_CONFIDENCE' && <div className="text-label-sm text-on-error-container">low confidence</div>}
+                        {frame.confidence === 'LOW_CONFIDENCE' && <div className="text-label-sm text-secondary">low confidence</div>}
                       </td>
                       <td className="py-2.5 pr-4">
                         <FeedStateBadge state={state} />

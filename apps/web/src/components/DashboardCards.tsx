@@ -185,7 +185,7 @@ export function ConsensusChartCard({
           <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
             <span className="text-label-sm text-outline">
               {selected.bookCount} contributing books · {ageLabel(Date.now() - selected.asOf)} old
-              {selected.confidence === 'LOW_CONFIDENCE' && <span className="text-on-error-container"> · low confidence</span>}
+              {selected.confidence === 'LOW_CONFIDENCE' && <span className="text-secondary"> · low confidence</span>}
               <TxBadge packetIds={selected.packetIds} asOf={selected.asOf} />
             </span>
             <button onClick={() => onExplain(selected)} className="text-label-sm text-primary underline decoration-dotted underline-offset-2 hover:text-primary-container">
@@ -380,7 +380,7 @@ export function EventTickerCard({ events }: { events: MatchEventDto[] }) {
             <span className="truncate text-outline">
               {ev.team ? `${ev.team} · ` : ''}
               {ev.fixtureId}
-              {ev.inferred && <span className="text-on-error-container"> · inferred from odds move</span>}
+              {ev.inferred && <span className="text-primary"> · inferred from odds move</span>}
             </span>
           </li>
         ))}

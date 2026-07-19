@@ -23,7 +23,7 @@ export function RuleFiredOverlay({ frame, onSign, onDismiss }: { frame: RuleFire
           {trigger.type === 'PRICE_CROSS'
             ? `Rule ${frame.template} fired ${frame.latencyMs}ms after TxLINE consensus crossed ${trigger.direction === 'ABOVE' ? 'above' : 'below'} ${pct(trigger.threshold)}`
             : `Rule ${frame.template} fired ${frame.latencyMs}ms after the event`}
-          {trigger.type !== 'PRICE_CROSS' && trigger.inferred && <span className="text-on-error-container"> · inferred from odds move</span>}
+          {trigger.type !== 'PRICE_CROSS' && trigger.inferred && <span className="text-primary-fixed"> · inferred from odds move</span>}
         </p>
 
         {plan.viable ? (
