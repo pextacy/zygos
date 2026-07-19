@@ -14,18 +14,24 @@ export function MatchBoard({
   consensus,
   histories,
   feedStates,
+  watched,
   selectedKey,
   onSelect,
 }: {
   consensus: Map<string, ConsensusFrame>;
   histories: Map<string, HistoryPoint[]>;
   feedStates: Map<string, FeedState>;
+  watched: string[];
   selectedKey: string | null;
   onSelect: (key: string) => void;
 }) {
   const [filter, setFilter] = useState<Filter>('all');
   const all = [...consensus.values()].sort((a, b) => a.fixtureId.localeCompare(b.fixtureId) || a.market.localeCompare(b.market));
   const frames = filter === 'live' ? all.filter((f) => (feedStates.get(f.fixtureId) ?? 'PENDING') === 'LIVE') : all;
+  // Watched fixtures with no consensus yet (no odds tick has ever arrived) still
+  // deserve a card — an invisible subscription reads as "not subscribed at all".
+  const withConsensus = new Set(all.map((f) => f.fixtureId));
+  const pending = filter === 'all' ? watched.filter((id) => !withConsensus.has(id)).sort() : [];
 
   const chip = (id: Filter, label: string) => (
     <button
@@ -49,7 +55,9 @@ export function MatchBoard({
       </div>
 
       <div className="no-scrollbar flex max-h-72 flex-1 flex-col gap-3 overflow-y-auto p-4 md:max-h-none">
-        {all.length === 0 && <p className="px-1 text-body-sm text-outline">No consensus yet — watch a fixture id from the header search to subscribe.</p>}
+        {all.length === 0 && pending.length === 0 && (
+          <p className="px-1 text-body-sm text-outline">No consensus yet — watch a fixture id from the header search to subscribe.</p>
+        )}
         {all.length > 0 && frames.length === 0 && <p className="px-1 text-body-sm text-outline">No live markets right now.</p>}
         {frames.map((frame) => {
           const key = `${frame.fixtureId}|${frame.market}`;
@@ -86,6 +94,15 @@ export function MatchBoard({
             </button>
           );
         })}
+        {pending.map((fixtureId) => (
+          <div key={fixtureId} className="rounded-lg border border-dashed border-outline-variant bg-surface-container-lowest p-4 shadow-card">
+            <div className="flex items-center justify-between gap-2">
+              <span className="truncate font-mono text-data-mono font-semibold text-primary">{fixtureId}</span>
+              <FeedStateBadge state={feedStates.get(fixtureId) ?? 'PENDING'} />
+            </div>
+            <p className="mt-2 text-label-sm text-outline">awaiting first odds</p>
+          </div>
+        ))}
       </div>
     </section>
   );

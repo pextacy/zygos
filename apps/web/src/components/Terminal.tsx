@@ -250,6 +250,7 @@ export function Terminal() {
                 consensus={state.consensus}
                 histories={state.history}
                 feedStates={state.feedStates}
+                watched={watched}
                 selectedKey={selectedMarket}
                 onSelect={setSelectedMarket}
               />
