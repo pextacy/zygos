@@ -58,6 +58,21 @@ export async function buildNonceSetupTx(connection: Connection, wallet: PublicKe
   };
 }
 
+/**
+ * Revoke tx: a single user-signed `nonceAdvance` on their own nonce account.
+ * Advancing consumes the stored nonce value, which invalidates EVERY
+ * outstanding pre-signed transaction built on it — including leaked copies
+ * the server no longer holds (security-review threat 6). Zero-risk: the
+ * instruction moves no funds and only the authority (the wallet) can sign it.
+ */
+export async function buildNonceRevokeTx(connection: Connection, wallet: PublicKey, noncePubkey: PublicKey): Promise<string> {
+  const { blockhash } = await connection.getLatestBlockhash('confirmed');
+  const tx = new Transaction().add(SystemProgram.nonceAdvance({ noncePubkey, authorizedPubkey: wallet }));
+  tx.feePayer = wallet;
+  tx.recentBlockhash = blockhash;
+  return tx.serialize({ requireAllSignatures: false }).toString('base64');
+}
+
 /** Read the current nonce value; null when the account does not exist/isn't a nonce account. */
 export async function fetchNonce(connection: Connection, noncePubkey: PublicKey): Promise<string | null> {
   const info = await connection.getAccountInfo(noncePubkey, 'confirmed');

@@ -3,9 +3,10 @@
 import { Buffer } from 'buffer';
 import { useState } from 'react';
 import { useConnection, useWallet } from '@solana/wallet-adapter-react';
+import { SystemProgram } from '@solana/web3.js';
 import { api } from '../lib/server';
 import type { RuleDto, ValuedPositionDto } from '../lib/types';
-import { buildWalletAuth, deserializeTx } from '../lib/wallet';
+import { buildWalletAuth, deserializeTx, isNonceAdvanceFor } from '../lib/wallet';
 import { IconClose } from './Icons';
 
 /** Arm a protective rule (FR-40/41): stored server-side, intent hash committed on-chain by the user's own signature. */
@@ -20,8 +21,10 @@ export function RuleArmModal({
 }) {
   const { publicKey, signMessage, signTransaction, sendTransaction } = useWallet();
   const { connection } = useConnection();
-  const [template, setTemplate] = useState<'GOAL_LOCK' | 'RED_CARD_REDUCE'>('GOAL_LOCK');
+  const [template, setTemplate] = useState<'GOAL_LOCK' | 'RED_CARD_REDUCE' | 'PRICE_LOCK'>('GOAL_LOCK');
   const [fraction, setFraction] = useState(70);
+  const [threshold, setThreshold] = useState(() => Math.min(95, Math.round((dto.valuation?.consensusProb ?? 0.5) * 100) + 10));
+  const [direction, setDirection] = useState<'ABOVE' | 'BELOW'>('ABOVE');
   const [delegated, setDelegated] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,6 +57,20 @@ export function RuleArmModal({
 
     const tx = deserializeTx(step.delegateTxBase64);
     if ('version' in tx) throw new Error('versioned tx cannot be delegated');
+    // Independent client-side check before signing (security-review req 2,
+    // bounded): the server-built tx must pay fees from THIS wallet, lead with
+    // exactly one nonceAdvance on the declared nonce account, and contain no
+    // other System-program instruction (blocks hidden SOL transfers /
+    // account closes). The wallet's own instruction display remains the
+    // final review surface.
+    if (!tx.feePayer?.equals(publicKey)) throw new Error('refusing to sign: delegated tx fee payer is not this wallet');
+    const [first, ...rest] = tx.instructions;
+    if (!isNonceAdvanceFor(first, publicKey, step.noncePubkey)) {
+      throw new Error('refusing to sign: first instruction must be a nonce advance on the declared nonce account, authorized by this wallet');
+    }
+    if (rest.some((ix) => ix.programId.equals(SystemProgram.programId))) {
+      throw new Error('refusing to sign: unexpected extra System-program instruction in delegated tx');
+    }
     const signed = await signTransaction(tx);
     await api(`/rules/${ruleId}/delegate`, {
       method: 'PUT',
@@ -80,10 +97,14 @@ export function RuleArmModal({
           template,
           team,
           fraction: fraction / 100,
+          ...(template === 'PRICE_LOCK' ? { threshold: threshold / 100, direction } : {}),
           auth,
         }),
       });
-      onLog('rule', `rule armed: ${template} ${fraction}% on ${dto.position.fixtureId} (intent ${rule.intentHash.slice(0, 12)}…)`);
+      onLog(
+        'rule',
+        `rule armed: ${template}${template === 'PRICE_LOCK' ? ` ${direction === 'ABOVE' ? '≥' : '≤'}${threshold}%` : ''} ${fraction}% on ${dto.position.fixtureId} (intent ${rule.intentHash.slice(0, 12)}…)`,
+      );
 
       if (delegated) {
         try {
@@ -138,7 +159,35 @@ export function RuleArmModal({
               If <span className="font-semibold text-error">{team} gets a red card</span>, prepare a {fraction}% reduction
             </span>
           </label>
+          <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-outline-variant p-2.5 has-[:checked]:border-primary has-[:checked]:bg-primary-fixed/40">
+            <input type="radio" checked={template === 'PRICE_LOCK'} onChange={() => setTemplate('PRICE_LOCK')} className="accent-primary" />
+            <span>
+              If <span className="font-semibold text-primary">TxLINE consensus for {team}</span> crosses a target, prepare a {fraction}% lock (one-shot)
+            </span>
+          </label>
         </div>
+
+        {template === 'PRICE_LOCK' && (
+          <div className="mt-3 rounded-lg border border-outline-variant bg-surface-container-low p-3">
+            <div className="flex items-center gap-2">
+              <select
+                value={direction}
+                onChange={(e) => setDirection(e.target.value as 'ABOVE' | 'BELOW')}
+                className="rounded border border-outline-variant bg-surface-container-lowest p-1.5 text-body-sm text-on-surface"
+                aria-label="Trigger direction"
+              >
+                <option value="ABOVE">rises above</option>
+                <option value="BELOW">falls below</option>
+              </select>
+              <span className="font-mono text-data-mono text-on-surface">{threshold}%</span>
+              {dto.valuation && <span className="text-label-sm text-outline">(now {Math.round(dto.valuation.consensusProb * 100)}%)</span>}
+            </div>
+            <input type="range" min={1} max={99} step={1} value={threshold} onChange={(e) => setThreshold(Number(e.target.value))} className="mt-2 w-full accent-primary" aria-label="Consensus threshold" />
+            <p className="mt-1 text-label-sm text-outline">
+              Fires once, on the tick that crosses the target — a take-profit ({direction === 'ABOVE' ? 'lock strength' : 'cut weakness'}) on TxLINE fair value.
+            </p>
+          </div>
+        )}
 
         <label className="mt-4 block text-label-sm text-outline">
           Fraction: <span className="font-mono text-data-mono text-on-surface">{fraction}%</span>

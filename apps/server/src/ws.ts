@@ -73,7 +73,12 @@ export function attachWs(
   }, HEALTH_INTERVAL_MS);
   healthTimer.unref();
 
+  // An 'error' event with no listener crashes the process (EventEmitter
+  // semantics) — a single misbehaving client must never take the server down.
+  wss.on('error', (err) => log.error({ err }, 'ws server error'));
+
   wss.on('connection', (socket) => {
+    socket.on('error', (err) => log.warn({ err }, 'ws client error'));
     socket.send(JSON.stringify({ type: 'HELLO', serverTime: Date.now() }));
     const valuationListeners: ValuationListener[] = [];
 
@@ -101,6 +106,10 @@ export function attachWs(
         .then(() => {
           if (frame.data.wallet !== undefined) {
             walletBySocket.set(socket, frame.data.wallet);
+            // Re-SUBSCRIBE replaces this socket's listeners — appending would
+            // leak one listener (and duplicate every VALUATION frame) per message.
+            for (const l of valuationListeners) valuation?.removeListener(l);
+            valuationListeners.length = 0;
             if (valuation === null) {
               socket.send(JSON.stringify({ type: 'ERROR', code: 'NO_VENUE_ADAPTER', detail: 'no venue configured — positions cannot be valued' }));
             } else {

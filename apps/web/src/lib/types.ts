@@ -74,6 +74,8 @@ export interface SerializedPlan {
 }
 
 export interface HedgePreviewDto {
+  /** Server-side handle — echoed to /hedge/confirm so the lock ledger records the signed plan. */
+  previewId: string;
   plan: SerializedPlan;
   unsignedTxBase64: string;
   packetIds: string[];
@@ -81,13 +83,63 @@ export interface HedgePreviewDto {
   simulated: boolean;
 }
 
+/** GET /locks/:wallet — one verified executed lock (plan fields null for delegated submissions). */
+export interface LockRecordDto {
+  id: string;
+  wallet: string;
+  positionRef: string;
+  fixtureId: string;
+  market: string;
+  outcome: string;
+  fractionPpm: number;
+  route: 'CLOSE' | 'HEDGE' | null;
+  guaranteedFloor: string | null;
+  edgePts: number | null;
+  impliedExitProb: number | null;
+  packetIds: string[];
+  consensusAsOf: number | null;
+  txSig: string | null;
+  /** Signature of the on-chain memo commitment (FR-33), once attached. */
+  memoSig: string | null;
+  source: 'MANUAL' | 'RULE' | 'DELEGATED';
+  ruleId: string | null;
+  sizeBefore: string | null;
+  sizeAfter: string | null;
+  executedAt: number;
+}
+
+export interface LockStatsDto {
+  count: number;
+  totalGuaranteedFloor: string;
+  avgEdgePts: number | null;
+  positiveEdgeCount: number;
+  lastLockAt: number | null;
+}
+
+export type RuleTemplate = 'GOAL_LOCK' | 'RED_CARD_REDUCE' | 'PRICE_LOCK';
+export type PriceDirection = 'ABOVE' | 'BELOW';
+
+/** PRICE_LOCK trigger: the consensus tick that crossed the armed threshold. */
+export interface PriceTriggerDto {
+  type: 'PRICE_CROSS';
+  packetId: string;
+  sourceTs: number;
+  fixtureId: string;
+  outcome: 'HOME' | 'AWAY';
+  prob: number;
+  threshold: number;
+  direction: PriceDirection;
+}
+
+export type RuleTriggerDto = MatchEventDto | PriceTriggerDto;
+
 export interface RuleFiredFrame {
   type: 'RULE_FIRED';
   ruleId: string;
   wallet: string;
   positionRef: string;
-  template: 'GOAL_LOCK' | 'RED_CARD_REDUCE';
-  event: MatchEventDto;
+  template: RuleTemplate;
+  event: RuleTriggerDto;
   preview: HedgePreviewDto;
   latencyMs: number;
 }
@@ -98,8 +150,13 @@ export interface RuleDto {
   positionRef: string;
   fixtureId: string;
   team: 'HOME' | 'AWAY';
-  template: 'GOAL_LOCK' | 'RED_CARD_REDUCE';
+  template: RuleTemplate;
   fractionPpm: number;
+  /** PRICE_LOCK only: consensus-probability threshold in ppm of 1.0. */
+  thresholdPpm: number | null;
+  direction: PriceDirection | null;
+  /** PRICE_LOCK is one-shot: non-null once it has fired. */
+  firedAt: number | null;
   createdAt: number;
   intentHash: string;
   /** Present on GET /rules/:wallet — null means prompt-based (no pre-signed tx). */
@@ -111,8 +168,8 @@ export interface RuleExecutedFrame {
   ruleId: string;
   wallet: string;
   positionRef: string;
-  template: 'GOAL_LOCK' | 'RED_CARD_REDUCE';
-  event: MatchEventDto;
+  template: RuleTemplate;
+  event: RuleTriggerDto;
   signature: string;
   latencyMs: number;
 }
@@ -149,6 +206,25 @@ export interface FixtureDto {
     packetIds: string[];
     asOf: number;
   }>;
+}
+
+/** GET /bindings — one TxLINE fixture ↔ venue market mapping. */
+export interface MarketBindingDto {
+  marketId: string;
+  fixtureId: string;
+  market: string;
+  yesOutcome: string;
+  source: 'MANUAL' | 'MATCHED';
+  note: string | null;
+  createdBy: string;
+  createdAt: number;
+}
+
+/** GET /bindings/candidates — inputs for the binding form, all real session data. */
+export interface BindingCandidatesDto {
+  unmappedMarketIds: string[];
+  fixtures: string[];
+  markets: Array<{ fixtureId: string; market: string }>;
 }
 
 export interface ActivityEntry {

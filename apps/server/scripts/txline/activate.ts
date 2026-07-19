@@ -202,10 +202,20 @@ if (!activateRes.ok) {
   console.error('common causes: network mismatch (devnet tx vs mainnet host), different signing wallet, wrong message string.');
   process.exit(2);
 }
-const activateBody = (await activateRes.json()) as { token?: string } | string;
-const apiToken = typeof activateBody === 'string' ? activateBody : activateBody.token;
+// The live endpoint answers text/plain with the bare token (observed 2026-07-19);
+// parse text-first so a JSON body still works but plain text never throws away
+// a SUCCESSFUL activation (the txSig is single-use — a lost token costs a new
+// on-chain subscribe).
+const rawBody = await activateRes.text();
+let apiToken: string | undefined;
+try {
+  const parsed = JSON.parse(rawBody) as { token?: string } | string;
+  apiToken = typeof parsed === 'string' ? parsed : parsed.token;
+} catch {
+  apiToken = rawBody.trim() || undefined;
+}
 if (!apiToken) {
-  console.error('activation response had no token:', activateBody);
+  console.error('activation response had no token:', rawBody);
   process.exit(2);
 }
 state.apiToken = apiToken;

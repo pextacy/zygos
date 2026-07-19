@@ -53,6 +53,26 @@ describe('JupiterPredictAdapter', () => {
     expect(positions[1]?.outcome).toBe('NO');
   });
 
+  it('scopes market routing to the fixture when several fixtures share a MarketKey', async () => {
+    // Two bound fixtures, both 1X2/HOME: an unscoped lookup would take the
+    // first map entry and quote (or order on!) the wrong match's market.
+    const multi = new Map<string, MarketBinding>([
+      ['mkt-a', { fixtureId: 'fx-1', market: { kind: '1X2' }, yesOutcome: 'HOME' }],
+      ['mkt-b', { fixtureId: 'fx-2', market: { kind: '1X2' }, yesOutcome: 'HOME' }],
+    ]);
+    const adapter = new JupiterPredictAdapter({
+      apiKey: 'k',
+      bindings: multi,
+      fetchFn: fakeFetch({
+        'GET /prediction/v1/markets/mkt-a': { marketId: 'mkt-a', yesPrice: 580000, noPrice: 440000 },
+        'GET /prediction/v1/markets/mkt-b': { marketId: 'mkt-b', yesPrice: 300000, noPrice: 720000 },
+      }),
+    });
+    const quote = await adapter.getQuote({ kind: '1X2' }, 'NOT_HOME', 'BUY', 1_000_000n, 'fx-2');
+    expect(quote.price).toBe(720_000n);
+    await expect(adapter.getQuote({ kind: '1X2' }, 'NOT_HOME', 'BUY', 1_000_000n, 'fx-3')).rejects.toThrow(FeedConfigError);
+  });
+
   it('quotes BUY of the complement side from live market pricing', async () => {
     const adapter = new JupiterPredictAdapter({
       apiKey: 'k',

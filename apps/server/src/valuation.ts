@@ -6,7 +6,7 @@ import {
   type OutcomeKey,
   type PositionValuation,
 } from '@zygos/core';
-import type { VenueAdapter, VenuePosition } from '@zygos/venue-adapters';
+import { unmappedMarketIdOf, type VenueAdapter, type VenuePosition } from '@zygos/venue-adapters';
 import type { FeedLogger, FeedService } from './feed.js';
 
 /**
@@ -70,6 +70,34 @@ export class ValuationService {
     return positions;
   }
 
+  /**
+   * Re-read every cached wallet's positions from the venue — used after a
+   * market-binding change so UNMAPPED_OUTCOME positions pick up their new
+   * fixture/outcome mapping without a reconnect. Per-wallet failures are
+   * logged, never fatal: one venue hiccup must not wedge the registry.
+   */
+  async refreshAllWallets(): Promise<void> {
+    await Promise.all(
+      [...this.positionsByWallet.keys()].map((wallet) =>
+        this.refreshPositions(wallet).catch((err: unknown) => {
+          this.log.error({ wallet: truncate(wallet), err: err instanceof Error ? err.message : String(err) }, 'position refresh failed after binding change');
+        }),
+      ),
+    );
+  }
+
+  /** Venue marketIds seen on cached positions that no binding maps yet. */
+  unmappedMarketIds(): string[] {
+    const ids = new Set<string>();
+    for (const positions of this.positionsByWallet.values()) {
+      for (const p of positions) {
+        const marketId = unmappedMarketIdOf(p.fixtureId);
+        if (marketId !== null) ids.add(marketId);
+      }
+    }
+    return [...ids].sort();
+  }
+
   addListener(l: ValuationListener): void {
     this.listeners.push(l);
     void this.refreshPositions(l.wallet).catch((err: unknown) => {
@@ -114,12 +142,15 @@ export class ValuationService {
       entryPrice: position.entryPrice?.toString() ?? null,
     };
 
-    if (snapshot === undefined) {
-      return { position: base, state: 'NO_CONSENSUS', valuation: null };
-    }
+    // Unmapped first: an unmapped position also never has a snapshot (its
+    // fixtureId is synthetic), so the NO_CONSENSUS check would otherwise
+    // shadow the more actionable UNMAPPED_OUTCOME state.
     if (!OUTCOME_KEYS.has(position.outcome)) {
       // e.g. Jupiter positions on unmapped markets ("YES"/"NOT_HOME" without binding)
       return { position: base, state: 'UNMAPPED_OUTCOME', valuation: null };
+    }
+    if (snapshot === undefined) {
+      return { position: base, state: 'NO_CONSENSUS', valuation: null };
     }
 
     try {

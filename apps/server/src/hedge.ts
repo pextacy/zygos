@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import {
   marketKeyString,
   planHedge,
@@ -10,6 +11,7 @@ import { Connection, PublicKey, Transaction, VersionedTransaction } from '@solan
 import type { VenuePosition } from '@zygos/venue-adapters';
 import { buildUnsignedMemoTx, lockCommitment } from './chain/memo.js';
 import type { FeedLogger, FeedService } from './feed.js';
+import type { LockLedger } from './ledger.js';
 import type { ValuationService } from './valuation.js';
 
 /**
@@ -20,15 +22,18 @@ import type { ValuationService } from './valuation.js';
  * post-verification (DOCS.md §5.6).
  */
 
-const COMPLEMENTS: Record<string, OutcomeKey[]> = {
-  HOME: ['DRAW', 'AWAY'],
-  DRAW: ['HOME', 'AWAY'],
-  AWAY: ['HOME', 'DRAW'],
-  OVER: ['UNDER'],
-  UNDER: ['OVER'],
-};
+/**
+ * Outcomes a lock can be built for. The venue trades binary YES/NO contracts,
+ * so the synthetic hedge is a single leg: buy `NOT_{outcome}` on the SAME
+ * market the position holds. Planning multi-leg complements (DRAW+AWAY) while
+ * executing a single NO purchase would price the plan with one book and the
+ * trade with another — the displayed floor would be fiction.
+ */
+const HEDGEABLE_OUTCOMES: ReadonlySet<string> = new Set<OutcomeKey>(['HOME', 'DRAW', 'AWAY', 'OVER', 'UNDER']);
 
 export interface HedgePreview {
+  /** Server-side handle: /hedge/confirm passes it back so the lock ledger records the exact plan the user signed against — never client-supplied numbers. */
+  previewId: string;
   plan: SerializedPlan;
   unsignedTxBase64: string;
   /** Consensus packet ids the fair value came from (FR-31 provenance). */
@@ -67,12 +72,26 @@ export function serializePlan(plan: HedgePlan): SerializedPlan {
   };
 }
 
+const PREVIEW_TTL_MS = 15 * 60 * 1000;
+
+interface CachedPreview {
+  wallet: string;
+  positionRef: string;
+  fraction: number;
+  preview: HedgePreview;
+  at: number;
+}
+
 export class HedgeOrchestrator {
+  /** Viable previews kept for confirm-time ledger recording (pruned by TTL). */
+  private readonly previewCache = new Map<string, CachedPreview>();
+
   constructor(
     private readonly valuation: ValuationService,
     private readonly feed: FeedService,
     private readonly connection: Connection | null,
     private readonly log: FeedLogger,
+    private readonly ledger: LockLedger | null = null,
   ) {}
 
   /** Build the full preview for locking `fraction` of a position. Throws typed errors upstream maps to HTTP. */
@@ -80,8 +99,9 @@ export class HedgeOrchestrator {
     const position = await this.valuation.getPosition(wallet, positionRef);
     if (!position) throw new PreviewError(404, `position ${positionRef} not found for wallet`);
 
-    const complements = COMPLEMENTS[position.outcome];
-    if (!complements) throw new PreviewError(422, `positions on outcome ${position.outcome} cannot be hedged (unmapped market)`);
+    if (!HEDGEABLE_OUTCOMES.has(position.outcome)) {
+      throw new PreviewError(422, `positions on outcome ${position.outcome} cannot be hedged (unmapped market)`);
+    }
 
     const snapshot = this.findSnapshot(position);
     if (!snapshot) throw new PreviewError(409, `no fresh consensus for ${position.fixtureId} ${marketKeyString(position.market)} — feed STALE, lock-in disabled (FR-14)`);
@@ -89,36 +109,36 @@ export class HedgeOrchestrator {
     if (consensusProb === undefined) throw new PreviewError(422, `consensus has no probability for ${position.outcome}`);
 
     const venue = this.valuation.venueAdapter;
-    const complementQuotes = await Promise.all(
-      complements.map((outcome) => venue.getQuote(position.market, outcome, 'BUY', position.size)),
-    );
-    let holdBid: bigint | null = null;
-    if (venue.buildCloseTx) {
-      try {
-        holdBid = (await venue.getQuote(position.market, position.outcome, 'SELL', position.size)).price;
-      } catch {
-        holdBid = null; // venue can't quote a close right now: synthetic route only
-      }
-    }
+    // Direct close is all-or-nothing at the venue (DELETE sells every
+    // contract), so the CLOSE route is only offered for a full lock. The two
+    // quotes are independent — fetch them concurrently.
+    const [complementQuote, holdBid] = await Promise.all([
+      venue.getQuote(position.market, `NOT_${position.outcome}`, 'BUY', position.size, position.fixtureId),
+      venue.buildCloseTx && fraction === 1
+        ? venue.getQuote(position.market, position.outcome, 'SELL', position.size, position.fixtureId).then(
+            (q) => q.price,
+            () => null, // venue can't quote a close right now: synthetic route only
+          )
+        : Promise.resolve<bigint | null>(null),
+    ]);
 
     const plan = planHedge({
       size: position.size,
       fraction,
       holdOutcome: position.outcome,
-      complementAsks: complementQuotes.map((q) => ({ outcome: q.outcome, price: q.price })),
+      complementAsks: [{ outcome: complementQuote.outcome, price: complementQuote.price }],
       holdBid,
       consensusProb,
     });
 
     if (!plan.viable) {
-      return { plan: serializePlan(plan), unsignedTxBase64: '', packetIds: snapshot.packetIds, consensusAsOf: snapshot.asOf, simulated: false };
+      return { previewId: randomUUID(), plan: serializePlan(plan), unsignedTxBase64: '', packetIds: snapshot.packetIds, consensusAsOf: snapshot.asOf, simulated: false };
     }
 
     const quoteForRoute =
       plan.route === 'CLOSE'
-        ? await venue.getQuote(position.market, position.outcome, 'SELL', plan.hedgeSize)
-        : complementQuotes[0];
-    if (!quoteForRoute) throw new PreviewError(500, 'route quote unavailable');
+        ? await venue.getQuote(position.market, position.outcome, 'SELL', plan.hedgeSize, position.fixtureId)
+        : complementQuote;
 
     const tx =
       plan.route === 'CLOSE' && venue.buildCloseTx
@@ -127,32 +147,54 @@ export class HedgeOrchestrator {
 
     const simulated = await this.simulate(tx.txBase64);
 
-    return {
+    const preview: HedgePreview = {
+      previewId: randomUUID(),
       plan: serializePlan(plan),
       unsignedTxBase64: tx.txBase64,
       packetIds: snapshot.packetIds,
       consensusAsOf: snapshot.asOf,
       simulated,
     };
+    this.cachePreview({ wallet, positionRef, fraction, preview, at: Date.now() });
+    return preview;
+  }
+
+  private cachePreview(entry: CachedPreview): void {
+    const cutoff = Date.now() - PREVIEW_TTL_MS;
+    for (const [id, cached] of this.previewCache) {
+      if (cached.at < cutoff) this.previewCache.delete(id);
+    }
+    this.previewCache.set(entry.preview.previewId, entry);
   }
 
   /**
    * Post-execution: re-read positions (post-verify, FR-33) and return the
-   * unsigned memo-commitment transaction for the wallet to sign.
+   * unsigned memo-commitment transaction for the wallet to sign. A verified
+   * lock is also written to the lock ledger; plan fields (route, floor, edge)
+   * come from the server's own cached preview looked up by `exec.previewId`,
+   * so the recorded edge is exactly what the user signed against.
    */
-  async confirm(wallet: string, positionRef: string, fraction: number, packetIds: string[]): Promise<{ verified: boolean; sizeAfter: string | null; memoTxBase64: string | null }> {
+  async confirm(
+    wallet: string,
+    positionRef: string,
+    fraction: number,
+    packetIds: string[],
+    exec?: { signature?: string; previewId?: string; ruleId?: string },
+  ): Promise<{ verified: boolean; sizeAfter: string | null; memoTxBase64: string | null; lockId: string | null }> {
     const before = await this.valuation.getPosition(wallet, positionRef);
     await this.valuation.refreshPositions(wallet);
     const after = await this.valuation.getPosition(wallet, positionRef);
 
     // v1 post-verify: the position must have shrunk or closed. Strict payout-
     // matrix re-verification against chain state needs the venue's position
-    // layout per route and lands with live-venue testing.
-    const shrunk = after === null || (before !== null && after.size < before.size);
+    // layout per route and lands with live-venue testing. A positionRef the
+    // server never saw (before === null) is NOT verifiable — otherwise any
+    // authed wallet could fabricate ledger rows for made-up refs.
+    const shrunk = before !== null && (after === null || after.size < before.size);
+    const source = before ?? after;
 
     let memoTxBase64: string | null = null;
     if (this.connection && shrunk) {
-      const source = before ?? after;
       const memo = lockCommitment({
         fixtureId: source?.fixtureId ?? 'unknown',
         market: source ? marketKeyString(source.market) : 'unknown',
@@ -163,7 +205,45 @@ export class HedgeOrchestrator {
       memoTxBase64 = (await buildUnsignedMemoTx(this.connection, new PublicKey(wallet), memo)).txBase64;
     }
 
-    return { verified: shrunk, sizeAfter: after?.size.toString() ?? null, memoTxBase64 };
+    let lockId: string | null = null;
+    if (shrunk && this.ledger) {
+      const cached = exec?.previewId !== undefined ? this.previewCache.get(exec.previewId) : undefined;
+      // The plan is only trusted when it was quoted for this exact wallet,
+      // position AND fraction — otherwise a stale previewId would pair another
+      // fraction's floor/edge with this confirm's fractionPpm in the ledger.
+      const plan =
+        cached !== undefined && cached.wallet === wallet && cached.positionRef === positionRef && cached.fraction === fraction
+          ? cached.preview
+          : null;
+      if (plan !== null && exec?.previewId !== undefined) this.previewCache.delete(exec.previewId);
+      const record = await this.ledger.record({
+        wallet,
+        positionRef,
+        fixtureId: source?.fixtureId ?? 'unknown',
+        market: source ? marketKeyString(source.market) : 'unknown',
+        outcome: source?.outcome ?? 'unknown',
+        fractionPpm: Math.round(fraction * 1_000_000),
+        route: plan?.plan.route ?? null,
+        guaranteedFloor: plan?.plan.guaranteedFloor ?? null,
+        edgePts: plan?.plan.edgePts ?? null,
+        impliedExitProb: plan?.plan.impliedExitProb ?? null,
+        packetIds: plan?.packetIds ?? packetIds,
+        consensusAsOf: plan?.consensusAsOf ?? null,
+        txSig: exec?.signature ?? null,
+        source: exec?.ruleId !== undefined ? 'RULE' : 'MANUAL',
+        ruleId: exec?.ruleId ?? null,
+        sizeBefore: before?.size.toString() ?? null,
+        sizeAfter: after?.size.toString() ?? null,
+        executedAt: Date.now(),
+      });
+      lockId = record.id;
+      this.log.info(
+        { lockId: record.id, fixtureId: record.fixtureId, market: record.market, edgePts: record.edgePts, packetIds: record.packetIds },
+        'lock recorded in ledger',
+      );
+    }
+
+    return { verified: shrunk, sizeAfter: after?.size.toString() ?? null, memoTxBase64, lockId };
   }
 
   private findSnapshot(position: VenuePosition): ConsensusSnapshot | null {

@@ -87,8 +87,8 @@ function fakeVenue(): VenueAdapter {
       outcome,
       side,
       size,
-      // DRAW ask 0.28, AWAY ask 0.22 → hedge floor/share = 0.50; SELL HOME bid 0.52 → close wins
-      price: side === 'SELL' ? 520_000n : outcome === 'DRAW' ? 280_000n : 220_000n,
+      // NOT_HOME ask 0.50 → hedge floor/share = 0.50; SELL HOME bid 0.52 → close wins
+      price: side === 'SELL' ? 520_000n : outcome.startsWith('NOT_') ? 500_000n : outcome === 'DRAW' ? 280_000n : 220_000n,
       feeIncluded: true,
       asOf: 0,
     }),
@@ -102,9 +102,9 @@ const okConnection = {
   getLatestBlockhash: async () => ({ blockhash: '4uQeVj5tqViQh7yWWGStvkEG1Zmhx6uasJtWCJziofM', lastValidBlockHeight: 1 }),
 } as unknown as Connection;
 
-function buildStack() {
+async function buildStack() {
   const adapter = new FakeFeedAdapter();
-  const db = openDb(':memory:');
+  const db = await openDb('memory://');
   const feed = new FeedService(adapter, db, silentLog);
   const valuation = new ValuationService(fakeVenue(), feed, silentLog);
   const hedge = new HedgeOrchestrator(valuation, feed, okConnection, silentLog);
@@ -114,11 +114,12 @@ function buildStack() {
 
 describe('pipeline integration: ticks → consensus → valuation → preview → rule firing', () => {
   it('carries a tick end-to-end into a simulated, provenance-tagged lock preview', async () => {
-    const { adapter, feed, valuation, hedge } = buildStack();
+    const { adapter, feed, valuation, hedge } = await buildStack();
     const now = Date.now();
 
     adapter.emitTick('book-a', [2.0, 3.6, 4.0], now - 2_000);
     adapter.emitTick('book-b', [1.95, 3.7, 4.2], now - 1_000);
+    await feed.flushTicks(); // ticks are processed on an audited, serialized chain
 
     // Consensus exists and is fresh.
     const snaps = feed.snapshots(now);
@@ -147,18 +148,20 @@ describe('pipeline integration: ticks → consensus → valuation → preview �
   });
 
   it('refuses a preview when consensus is stale — the FR-14 lockout reaches the tx layer', async () => {
-    const { adapter, hedge, valuation } = buildStack();
+    const { adapter, feed, hedge, valuation } = await buildStack();
     adapter.emitTick('book-a', [2.0, 3.6, 4.0], Date.now() - 120_000); // stale
+    await feed.flushTicks();
     await valuation.refreshPositions(WALLET);
     await expect(hedge.preview(WALLET, 'pos-1', 1)).rejects.toThrow(PreviewError);
     await expect(hedge.preview(WALLET, 'pos-1', 1)).rejects.toThrow(/STALE/);
   });
 
   it('armed GOAL_LOCK fires from a feed event with a fully built, simulated preview', async () => {
-    const { adapter, rules, valuation } = buildStack();
+    const { adapter, feed, rules, valuation } = await buildStack();
     const now = Date.now();
     adapter.emitTick('book-a', [2.0, 3.6, 4.0], now - 1_000);
     adapter.emitTick('book-b', [1.95, 3.7, 4.2], now - 500);
+    await feed.flushTicks();
     await valuation.refreshPositions(WALLET);
 
     await rules.create({ wallet: WALLET, positionRef: 'pos-1', template: 'GOAL_LOCK', team: 'HOME', fraction: 0.7 });
@@ -176,7 +179,7 @@ describe('pipeline integration: ticks → consensus → valuation → preview �
   });
 
   it('inferred events flow through the same path when no real event stream exists', async () => {
-    const { adapter, feed } = buildStack();
+    const { adapter, feed } = await buildStack();
     const now = Date.now();
     const events: MatchEvent[] = [];
     feed.addListener({ onEvent: (e) => events.push(e) });
@@ -185,6 +188,7 @@ describe('pipeline integration: ticks → consensus → valuation → preview �
     adapter.emitTick('book-a', [2.0, 3.6, 4.0], now - 6_000);
     adapter.emitTick('book-a', [1.63, 4.1, 5.2], now - 4_000);
     adapter.emitTick('book-a', [1.62, 4.15, 5.3], now - 2_000);
+    await feed.flushTicks();
 
     const inferred = events.filter((e) => e.inferred);
     expect(inferred).toHaveLength(1);

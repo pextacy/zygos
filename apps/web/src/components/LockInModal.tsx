@@ -22,7 +22,7 @@ export function LockInModal({
   onLog,
 }: {
   dto: ValuedPositionDto;
-  prefill?: { fraction: number; preview: HedgePreviewDto };
+  prefill?: { fraction: number; preview: HedgePreviewDto; ruleId?: string };
   onClose: (locked?: boolean) => void;
   onLog: (kind: 'lock' | 'error' | 'info', text: string) => void;
 }) {
@@ -30,6 +30,8 @@ export function LockInModal({
   const { connection } = useConnection();
   const [fraction, setFraction] = useState(prefill?.fraction ?? 1);
   const [preview, setPreview] = useState<HedgePreviewDto | null>(prefill?.preview ?? null);
+  /** The fraction the current preview was quoted at — signing is only allowed when it matches the slider. */
+  const [quotedFraction, setQuotedFraction] = useState<number | null>(prefill?.fraction ?? null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<'preview' | 'sign' | null>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -43,9 +45,13 @@ export function LockInModal({
         method: 'POST',
         body: JSON.stringify({ wallet: publicKey.toBase58(), positionRef: dto.position.positionRef, fraction: f }),
       })
-        .then((p) => setPreview(p))
+        .then((p) => {
+          setPreview(p);
+          setQuotedFraction(f);
+        })
         .catch((err: Error) => {
           setPreview(null);
+          setQuotedFraction(null);
           setError(err.message);
         })
         .finally(() => setBusy(null));
@@ -68,7 +74,10 @@ export function LockInModal({
     preview.plan.payoutMatrix.length > 1 &&
     preview.plan.payoutMatrix.slice(1).every((r) => r.total === preview.plan.payoutMatrix[1]?.total);
 
-  const signable = preview !== null && preview.plan.viable && preview.simulated && matrixConsistent && busy === null;
+  // quotedFraction must match the slider: during the debounce window the old
+  // preview is still on screen — signing it would execute a different fraction
+  // than displayed (and record the wrong one in the ledger).
+  const signable = preview !== null && preview.plan.viable && preview.simulated && matrixConsistent && busy === null && quotedFraction === fraction;
 
   async function executeLock() {
     if (!preview || !publicKey || !signMessage) return;
@@ -82,7 +91,7 @@ export function LockInModal({
       onLog('lock', `lock confirmed on-chain: ${signature}`);
 
       const auth = await buildWalletAuth('hedge-confirm', publicKey.toBase58(), signMessage);
-      const confirm = await api<{ verified: boolean; memoTxBase64: string | null }>('/hedge/confirm', {
+      const confirm = await api<{ verified: boolean; memoTxBase64: string | null; lockId: string | null }>('/hedge/confirm', {
         method: 'POST',
         body: JSON.stringify({
           wallet: publicKey.toBase58(),
@@ -90,6 +99,8 @@ export function LockInModal({
           fraction,
           signature,
           packetIds: preview.packetIds,
+          previewId: preview.previewId, // ledger records the server-built plan behind this signature
+          ...(prefill?.ruleId !== undefined ? { ruleId: prefill.ruleId } : {}),
           auth,
         }),
       });
@@ -99,6 +110,15 @@ export function LockInModal({
       if (confirm.memoTxBase64) {
         const memoSig = await sendTransaction(deserializeTx(confirm.memoTxBase64), connection);
         onLog('lock', `commitment memo written: ${memoSig}`);
+        // Complete the FR-33 audit chain: persist the memo signature on the ledger row.
+        if (confirm.lockId) {
+          try {
+            const memoAuth = await buildWalletAuth('locks-memo', publicKey.toBase58(), signMessage);
+            await api(`/locks/${confirm.lockId}/memo`, { method: 'PATCH', body: JSON.stringify({ memoSig, auth: memoAuth }) });
+          } catch (memoErr) {
+            onLog('error', `memo written on-chain but not attached to the ledger row: ${memoErr instanceof Error ? memoErr.message : memoErr}`);
+          }
+        }
       }
       onClose(true);
     } catch (err) {

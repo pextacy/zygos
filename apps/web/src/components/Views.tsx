@@ -1,12 +1,14 @@
 'use client';
 
-import { ageLabel, pct, usd } from '../lib/format';
+import { ageLabel, pct, ppmPct, usd } from '../lib/format';
 import { explorerTxUrl } from '../lib/server';
 import type { ConsensusFrame, FeedState, HealthDto, MatchEventDto, ValuedPositionDto } from '../lib/types';
-import { useArmedRules, RuleStatusPill, ruleTitle, ruleDescription } from './ArmedRulesPanel';
+import { useArmedRules, RuleStatusPill, ruleTitle, ruleDescription, thresholdLabel } from './ArmedRulesPanel';
 import { EventTickerCard, SystemStatusCard } from './DashboardCards';
 import { FeedStateBadge } from './FeedStateBadge';
 import { IconPlus } from './Icons';
+import { LockLedgerPanel } from './LockLedgerPanel';
+import { MarketBindingsPanel } from './MarketBindingsPanel';
 import { PositionsTable, pnl } from './PositionsTable';
 import { TxBadge } from './TxBadge';
 import { clockTime } from '../lib/format';
@@ -21,20 +23,25 @@ function sumMicro(values: Array<string | null>): string {
 export function PortfolioView({
   positions,
   feedStates,
-  walletConnected,
+  wallet,
   loading,
+  ledgerKey,
   onRefresh,
   onLockIn,
   onArmRule,
+  onBindMarket,
 }: {
   positions: ValuedPositionDto[];
   feedStates: Map<string, FeedState>;
-  walletConnected: boolean;
+  wallet: string | null;
   loading: boolean;
+  ledgerKey: number;
   onRefresh: () => void;
   onLockIn: (dto: ValuedPositionDto) => void;
   onArmRule: (dto: ValuedPositionDto) => void;
+  onBindMarket?: () => void;
 }) {
+  const walletConnected = wallet !== null;
   const totalFair = sumMicro(positions.map((p) => p.valuation?.fairValue ?? null));
   const totalPnl = sumMicro(positions.map(pnl));
   const totalLag = sumMicro(positions.map((p) => p.valuation?.lagDelta ?? null));
@@ -108,7 +115,10 @@ export function PortfolioView({
         onRefresh={onRefresh}
         onLockIn={onLockIn}
         onArmRule={onArmRule}
+        {...(onBindMarket ? { onBindMarket } : {})}
       />
+
+      <LockLedgerPanel wallet={wallet} refreshKey={ledgerKey} />
     </div>
   );
 }
@@ -127,7 +137,7 @@ export function AutomationView({
   onLog: (kind: 'rule' | 'error', text: string) => void;
   onArmNew: () => void;
 }) {
-  const { rules, loading, cancelling, cancel } = useArmedRules(wallet, refreshKey, onLog);
+  const { rules, loading, cancelling, cancel, revoke } = useArmedRules(wallet, refreshKey, onLog);
   const delegated = rules.filter((r) => r.delegation && r.delegation.status !== 'failed');
 
   return (
@@ -148,19 +158,37 @@ export function AutomationView({
           <div key={rule.id} className="rounded-xl border border-outline-variant bg-surface-container-lowest p-4 shadow-card">
             <div className="mb-2 flex items-start justify-between gap-2">
               <RuleStatusPill rule={rule} />
-              <button onClick={() => cancel(rule)} disabled={cancelling === rule.id} className="text-label-sm text-outline transition-colors enabled:hover:text-error disabled:opacity-40">
-                {cancelling === rule.id ? 'Signing…' : 'Cancel'}
-              </button>
+              <span className="flex gap-3">
+                {rule.delegation?.status === 'armed' && (
+                  <button
+                    onClick={() => revoke(rule)}
+                    disabled={cancelling === rule.id}
+                    title="Erase the stored pre-signed tx and void it on-chain via a nonce advance"
+                    className="text-label-sm text-outline transition-colors enabled:hover:text-error disabled:opacity-40"
+                  >
+                    Revoke
+                  </button>
+                )}
+                <button onClick={() => cancel(rule)} disabled={cancelling === rule.id} className="text-label-sm text-outline transition-colors enabled:hover:text-error disabled:opacity-40">
+                  {cancelling === rule.id ? 'Signing…' : 'Cancel'}
+                </button>
+              </span>
             </div>
             <h4 className="font-mono text-data-mono text-on-surface">{ruleTitle(rule)}</h4>
             <div className="mt-2 rounded border border-surface-container-high bg-surface-container-low p-2 font-mono text-label-sm text-on-surface-variant">
               <div className="flex justify-between gap-2">
                 <span className="text-outline">IF</span>
-                <span>{rule.template === 'GOAL_LOCK' ? `goal · ${rule.team}` : `red card · ${rule.team}`}</span>
+                <span>
+                  {rule.template === 'PRICE_LOCK'
+                    ? `consensus ${thresholdLabel(rule)} · ${rule.team}`
+                    : rule.template === 'GOAL_LOCK'
+                      ? `goal · ${rule.team}`
+                      : `red card · ${rule.team}`}
+                </span>
               </div>
               <div className="flex justify-between gap-2">
                 <span className="text-outline">THEN</span>
-                <span>lock {Math.round(rule.fractionPpm / 10_000)}% of position</span>
+                <span>lock {ppmPct(rule.fractionPpm)} of position</span>
               </div>
             </div>
             <p className="mt-2 text-body-sm text-outline">{ruleDescription(rule)}</p>
@@ -247,12 +275,14 @@ export function AnalyticsView({
   events,
   health,
   onExplain,
+  onLog,
 }: {
   consensus: Map<string, ConsensusFrame>;
   feedStates: Map<string, FeedState>;
   events: MatchEventDto[];
   health: HealthDto | null;
   onExplain: (frame: ConsensusFrame) => void;
+  onLog: (kind: 'info' | 'error', text: string) => void;
 }) {
   const frames = [...consensus.values()].sort((a, b) => a.fixtureId.localeCompare(b.fixtureId) || a.market.localeCompare(b.market));
 
@@ -321,6 +351,8 @@ export function AnalyticsView({
           )}
         </div>
       </div>
+
+      <MarketBindingsPanel onLog={onLog} />
 
       <div className="mt-6">
         <EventTickerCard events={events} />

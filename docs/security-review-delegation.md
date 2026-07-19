@@ -36,6 +36,30 @@ Prompt-based rules remain the default; delegation is opt-in per rule.
 
 ## Requirements before mainnet delegation
 
-1. Revoke button (threat 6) — user-signed nonce advance.
-2. Client-side instruction diff before pre-signing (threat 2).
-3. Encrypt `delegations.signed_tx_base64` at rest.
+1. ~~Revoke button (threat 6) — user-signed nonce advance.~~ **CLOSED
+   2026-07-18:** `POST /rules/:id/revoke` erases the stored pre-signed tx
+   server-side immediately and returns an unsigned `nonceAdvance` for the
+   wallet to sign — landing it voids every outstanding pre-signed tx on the
+   nonce, including leaked copies. Revoke buttons in Quick Rules and
+   Automation; adversarial tests cover wallet-binding, the no-re-execution
+   guarantee, and the advance-tx shape.
+2. Client-side instruction check before pre-signing (threat 2). **Bounded
+   version closed 2026-07-18:** before `signTransaction`, the client
+   independently verifies fee payer = the connected wallet, exactly one
+   leading `nonceAdvance` on the declared nonce account, and no other
+   System-program instruction (blocks hidden SOL transfers/closes). The
+   wallet's own instruction display remains the final review surface; a
+   full venue-instruction diff stays open for when the venue program id is
+   pinned client-side. **Strengthened 2026-07-19:** the leading instruction
+   is verified with `SystemInstruction.decodeNonceAdvance` (type + nonce
+   account + authority = this wallet), not a programId/keys[0] heuristic, so
+   a `WithdrawNonceAccount`/`AuthorizeNonceAccount` can no longer pass as an
+   advance; `storeDelegation` mirrors the same no-extra-System-instruction
+   check server-side; and the revoke flow simulates the nonce-advance tx and
+   verifies its shape before any signature prompt.
+3. ~~Encrypt `delegations.signed_tx_base64` at rest.~~ **CLOSED 2026-07-18:**
+   AES-256-GCM via `DELEGATION_ENC_KEY` (64-hex raw key or passphrase,
+   sha256-derived). Blobs are self-describing (`enc:v1:`), so pre-key rows
+   keep working and enabling the key needs no migration; decryption happens
+   only at submit time. Boot warns loudly when the key is unset. A DB dump
+   without the env key yields no submittable transaction.

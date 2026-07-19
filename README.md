@@ -15,7 +15,7 @@ Built for the TxODDS World Cup Hackathon (Trading Tools & Agents track).
 Non-custodial, no mock data anywhere in the runtime, every price traceable to
 its TxLINE source packets.
 
-> **Status:** all software complete and behavior-proven (72 tests incl. an
+> **Status:** all software complete and behavior-proven (105 tests incl. an
 > end-to-end pipeline integration and fast-check property tests). Live-fire
 > and deployment steps: `docs/runbook-matchday.md`. Phase tracking:
 > `docs/phases.md`.
@@ -44,8 +44,8 @@ Checks: `pnpm test` · `pnpm typecheck` · `pnpm lint` · `pnpm audit:nomock`
                 │        │           outliers)         ▲                                    │
  Solana RPC ───▶│        ▼               │             │          HTTP: /positions/:wallet  │
                 │  Packet audit log      ▼        VenueAdapter    /hedge/preview|confirm    │
-                │  (SQLite, hash    Event inference (Jupiter       /rules CRUD              │
-                │   before parse)   (odds jumps §6)  Predict)                               │
+                │  (Neon Postgres,  Event inference (Jupiter       /rules CRUD              │
+                │   before parse)   (odds jumps §6)  Predict)      /locks/:wallet (ledger)  │
                 └──────────────────────────────────────────────────────────────────────────┘
                                              │
                                              ▼
@@ -62,14 +62,19 @@ Checks: `pnpm test` · `pnpm typecheck` · `pnpm lint` · `pnpm audit:nomock`
   one directory changes.
 - **`apps/server`** — ingest, audit log, WS fanout, hedge orchestration
   (preview → **mandatory simulate** → unsigned tx → post-verify → memo),
-  rule engine v1, signed-message auth, CORS allowlist for the deployed web
-  origin (`WEB_ORIGIN`).
+  rule engine (event templates GOAL_LOCK / RED_CARD_REDUCE plus the
+  price-triggered PRICE_LOCK: one-shot take-profit/stop fired when TxLINE
+  consensus crosses an armed threshold), lock ledger (every verified lock
+  persisted with the edge it captured vs fair value, plan fields taken from
+  the server-cached preview the user actually signed), signed-message auth,
+  CORS allowlist for the deployed web origin (`WEB_ORIGIN`).
 - **`apps/web`** — trading terminal (light professional fintech design; Geist +
   JetBrains Mono). Four views — Terminal (match feed, live consensus timeline,
-  positions, quick rules), Portfolio (fair-value totals, TxLINE-lead,
+  positions, quick rules), Portfolio (fair-value totals, TxLINE-lead, lock
+  ledger with per-lock edge captured and CSV export,
   allocation), Automation (rule + delegation management), Analytics (market
   provenance table, system status from `/healthz`). Talks HTTP/WS only; TxLINE
-  credentials never reach the browser. First load 225 kB gz (budget 300 kB).
+  credentials never reach the browser. First load 234 kB (budget 300 kB).
 
 ## TxLINE integration (the product's reason to exist)
 
@@ -112,8 +117,14 @@ one-directory change.
   frozen visibly, lock-in disabled — enforced in core (`FeedStaleError`), at
   the tx layer (preview refuses), and in the UI.
 - **Auditability.** Locks write an on-chain memo commitment
-  (`sha256(fixture|market|side|fraction|packetIds)`); rules pre-commit their
-  intent hash on-chain at creation; every firing logs its triggering packet.
+  (`sha256(fixture|market|side|fraction|packetIds)`) whose signature is
+  persisted on the lock-ledger row; rules pre-commit their intent hash
+  on-chain at creation; every firing logs its triggering packet.
+- **Delegation stays revocable and encrypted.** A delegated rule can be
+  revoked at any time (stored pre-signed tx erased + a user-signed nonce
+  advance voids leaked copies on-chain); stored pre-signed txs are
+  AES-256-GCM encrypted at rest (`DELEGATION_ENC_KEY`), and the client
+  independently verifies the tx shape before pre-signing.
 - Mutating endpoints require a wallet-signed challenge (`zygos:{action}:{nonce}`,
   replay-guarded). TxLINE credentials live only in server env vars.
 
@@ -124,8 +135,12 @@ jurisdiction is the venue's responsibility and is disclaimed at wallet connect.
 ## Known limitations (stated, not hidden)
 
 - The Jupiter market-binding registry (TxLINE fixture ↔ venue market) starts
-  empty and is populated at the liquidity gate; unmapped positions surface as
-  `UNMAPPED_OUTCOME` rather than being silently valued.
+  empty; bindings are entered at the liquidity gate through the persistent
+  registry (Analytics → Market Bindings, or `PUT /bindings/:marketId`,
+  wallet-signed, `ADMIN_WALLETS`-restrictable) and apply live — until then,
+  unmapped positions surface as `UNMAPPED_OUTCOME` rather than being silently
+  valued. Automated fixture↔market matching remains manual-first by design:
+  a wrong auto-binding would mis-value real money.
 - Post-execution verification v1 confirms the position shrank/closed; strict
   payout-matrix re-verification against chain state lands with live-venue
   testing.

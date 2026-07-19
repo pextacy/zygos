@@ -1,6 +1,7 @@
 'use client';
 
 import { ageLabel, usd } from '../lib/format';
+import { unmappedMarketIdOf } from '../lib/positions';
 import type { FeedState, ValuedPositionDto } from '../lib/types';
 import { FeedStateBadge } from './FeedStateBadge';
 import { IconRefresh } from './Icons';
@@ -29,6 +30,7 @@ export function PositionsTable({
   onRefresh,
   onLockIn,
   onArmRule,
+  onBindMarket,
   className,
 }: {
   positions: ValuedPositionDto[];
@@ -38,6 +40,8 @@ export function PositionsTable({
   onRefresh: () => void;
   onLockIn: (dto: ValuedPositionDto) => void;
   onArmRule: (dto: ValuedPositionDto) => void;
+  /** Navigate to the Market Bindings panel (Analytics) for an UNMAPPED position. */
+  onBindMarket?: () => void;
   className?: string;
 }) {
   return (
@@ -78,6 +82,7 @@ export function PositionsTable({
                 const feedState = feedStates.get(dto.position.fixtureId) ?? 'STALE';
                 const stale = dto.state === 'STALE' || feedState === 'STALE';
                 const lockable = dto.state === 'OK' && !stale;
+                const unmappedId = unmappedMarketIdOf(dto.position.fixtureId);
                 const unrealized = pnl(dto);
                 const entry =
                   dto.position.entryPrice !== null ? usd(((BigInt(dto.position.size) * BigInt(dto.position.entryPrice)) / 1_000_000n).toString()) : '—';
@@ -89,11 +94,17 @@ export function PositionsTable({
                         <span className={`rounded-full px-2 py-0.5 font-mono text-label-sm ${OUTCOME_PILL[dto.position.outcome] ?? 'bg-surface-variant text-secondary'}`}>
                           {dto.position.outcome}
                         </span>
-                        <span className="font-mono text-data-mono text-on-surface">{dto.position.fixtureId}</span>
+                        {unmappedId !== null ? (
+                          <span className="break-all font-mono text-data-mono text-on-surface" title={`venue marketId ${unmappedId} — not bound to a TxLINE fixture`}>
+                            {unmappedId.length > 20 ? `${unmappedId.slice(0, 20)}…` : unmappedId}
+                          </span>
+                        ) : (
+                          <span className="font-mono text-data-mono text-on-surface">{dto.position.fixtureId}</span>
+                        )}
                       </div>
                       <div className="mt-1 flex items-center gap-2 text-label-sm text-outline">
-                        {dto.position.market}
-                        <FeedStateBadge state={stale ? 'STALE' : feedState} />
+                        {unmappedId !== null ? 'venue market' : dto.position.market}
+                        {unmappedId === null && <FeedStateBadge state={stale ? 'STALE' : feedState} />}
                       </div>
                     </td>
                     <td className="py-3 pr-4 font-mono text-data-mono text-on-surface">{usd(dto.position.size)}</td>
@@ -107,6 +118,26 @@ export function PositionsTable({
                             mark {usd(dto.valuation.markValue)} · lag Δ {usd(dto.valuation.lagDelta)} · {ageLabel(dto.valuation.feedAgeMs)} old
                           </div>
                         </>
+                      ) : dto.state === 'UNMAPPED_OUTCOME' ? (
+                        <div>
+                          <span className="rounded-sm bg-error-container px-1.5 py-0.5 font-mono text-label-sm text-on-error-container">UNMAPPED</span>
+                          <div className="mt-1 text-label-sm text-outline">
+                            not valued — venue market has no TxLINE binding
+                            {onBindMarket && (
+                              <button
+                                onClick={onBindMarket}
+                                className="ml-1.5 text-primary underline decoration-dotted underline-offset-2 hover:text-primary-container"
+                              >
+                                Bind market →
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      ) : dto.state === 'NO_CONSENSUS' ? (
+                        <div>
+                          <span className="rounded-sm bg-surface-variant px-1.5 py-0.5 font-mono text-label-sm text-secondary">NO CONSENSUS</span>
+                          <div className="mt-1 text-label-sm text-outline">no TxLINE snapshot for this market yet — watch its fixture in the Match Feed</div>
+                        </div>
                       ) : (
                         <span className="font-mono text-data-mono text-error">{dto.state}</span>
                       )}
@@ -119,7 +150,17 @@ export function PositionsTable({
                         <button
                           disabled={!lockable}
                           onClick={() => onLockIn(dto)}
-                          title={stale ? 'Feed stale — lock-in disabled (FR-14)' : dto.state !== 'OK' ? dto.state : 'Lock in a guaranteed payout'}
+                          title={
+                            stale
+                              ? 'Feed stale — lock-in disabled (FR-14)'
+                              : dto.state === 'UNMAPPED_OUTCOME'
+                                ? 'Venue market not bound to a TxLINE fixture — bind it in Analytics → Market Bindings'
+                                : dto.state === 'NO_CONSENSUS'
+                                  ? 'No TxLINE consensus for this market yet'
+                                  : dto.state !== 'OK'
+                                    ? dto.state
+                                    : 'Lock in a guaranteed payout'
+                          }
                           className="rounded bg-primary px-3 py-1.5 font-mono text-label-sm text-on-primary transition-colors enabled:hover:bg-primary-container disabled:cursor-not-allowed disabled:opacity-40"
                         >
                           Lock In

@@ -25,6 +25,16 @@ export type FeedState = 'LIVE' | 'DEGRADED' | 'STALE';
 const DEGRADED_AFTER_MS = 10_000;
 const STALE_AFTER_MS = 30_000; // FR-14
 
+/** Subscription endpoints are unauthenticated; cap total tracked fixtures so anonymous clients can't grow state/upstream polling without bound. */
+const MAX_SUBSCRIBED_FIXTURES = 200;
+
+export class SubscriptionLimitError extends Error {
+  constructor(requested: number, limit: number) {
+    super(`subscription limit reached: ${requested} requested, cap is ${limit} fixtures`);
+    this.name = 'SubscriptionLimitError';
+  }
+}
+
 export interface FeedListeners {
   onConsensus?: (snap: ConsensusSnapshot) => void;
   onEvent?: (event: MatchEvent) => void;
@@ -60,14 +70,18 @@ export class FeedService {
     return createHash('sha256').update(body).digest('hex');
   }
 
-  /** Record the raw poll body before parsing (DOCS.md §3.2). Called from the adapter's onRawPacket hook. */
+  /**
+   * Record the raw poll body before parsing (DOCS.md §3.2). Called from the
+   * adapter's onRawPacket hook. The insert is fire-and-forget: audit writes
+   * must never stall the hot tick path on DB latency.
+   */
   auditRaw(raw: { fixtureId: string; body: string; receivedAt: number }): string {
     const hash = FeedService.hashRaw(raw.body);
-    try {
-      this.db.insert(rawPackets).values({ hash, fixtureId: raw.fixtureId, receivedAt: raw.receivedAt }).onConflictDoNothing().run();
-    } catch (err) {
-      this.log.error({ err, fixtureId: raw.fixtureId }, 'raw packet audit insert failed');
-    }
+    void this.db
+      .insert(rawPackets)
+      .values({ hash, fixtureId: raw.fixtureId, receivedAt: raw.receivedAt })
+      .onConflictDoNothing()
+      .catch((err: unknown) => this.log.error({ err, fixtureId: raw.fixtureId }, 'raw packet audit insert failed'));
     this.lastRawHash.set(raw.fixtureId, hash);
     return hash;
   }
@@ -77,6 +91,9 @@ export class FeedService {
   async subscribe(fixtureIds: string[]): Promise<void> {
     const fresh = fixtureIds.filter((id) => !this.subscribed.has(id));
     if (fresh.length === 0) return;
+    if (this.subscribed.size + fresh.length > MAX_SUBSCRIBED_FIXTURES) {
+      throw new SubscriptionLimitError(this.subscribed.size + fresh.length, MAX_SUBSCRIBED_FIXTURES);
+    }
     await this.adapter.subscribe(fresh);
     for (const id of fresh) this.subscribed.add(id);
     this.log.info({ fixtureIds: fresh }, 'subscribed fixtures');
@@ -116,15 +133,34 @@ export class FeedService {
     return this.adapter.health();
   }
 
+  /**
+   * Ticks are processed on a serialized chain: the packet audit insert must
+   * LAND before the tick is consumed and fanned out (FR-13 audit-before-
+   * consume), otherwise a client can be shown a packetId that /verify/odds
+   * still 404s on — or, on a crash, one whose provenance row is lost forever.
+   * The chain also preserves per-market tick ordering across async awaits.
+   */
+  private tickChain: Promise<void> = Promise.resolve();
+
   private handleTick(tick: OddsTick): void {
+    this.tickChain = this.tickChain.then(() => this.processTick(tick));
+  }
+
+  /** Resolves when every tick received so far is audited, folded and fanned out (tests, shutdown). */
+  flushTicks(): Promise<void> {
+    return this.tickChain;
+  }
+
+  private async processTick(tick: OddsTick): Promise<void> {
     const rawHash = this.lastRawHash.get(tick.fixtureId) ?? 'unknown';
     try {
-      this.db
+      await this.db
         .insert(packets)
         .values({ packetId: tick.packetId, sourceTs: tick.sourceTs, fixtureId: tick.fixtureId, market: marketKeyString(tick.market), rawHash })
-        .onConflictDoNothing()
-        .run();
-    } catch (err) {
+        .onConflictDoNothing();
+    } catch (err: unknown) {
+      // The tick is still consumed (a dropped tick would freeze valuations),
+      // but the failure is loud: this packet cannot be /verify'd later.
       this.log.error({ err, packetId: tick.packetId, fixtureId: tick.fixtureId }, 'packet audit insert failed');
     }
 

@@ -30,7 +30,7 @@ const log: FeedLogger = {
   error: (o, m) => console.error(JSON.stringify({ level: 'error', ...o, msg: m })),
 };
 
-const db = openDb(env.DATABASE_URL);
+const db = await openDb(env.DATABASE_URL);
 const adapter = new TxLineAdapter({
   origin: env.TXLINE_ORIGIN,
   apiToken: env.TXLINE_API_TOKEN,

@@ -49,6 +49,8 @@ interface StreamState {
   abort: AbortController | null;
   backoffMs: number;
   lastEventAt: number | null;
+  /** True while a streamLoop owns this state — prevents a second concurrent loop after disconnect/reconnect. */
+  looping: boolean;
 }
 
 export class TxLineAdapter implements OddsFeedAdapter {
@@ -67,8 +69,8 @@ export class TxLineAdapter implements OddsFeedAdapter {
   private tickCbs: Array<(t: OddsTick) => void> = [];
   private eventCbs: Array<(e: MatchEvent) => void> = [];
   private readonly streams: Record<'odds' | 'scores', StreamState> = {
-    odds: { abort: null, backoffMs: 0, lastEventAt: null },
-    scores: { abort: null, backoffMs: 0, lastEventAt: null },
+    odds: { abort: null, backoffMs: 0, lastEventAt: null, looping: false },
+    scores: { abort: null, backoffMs: 0, lastEventAt: null, looping: false },
   };
 
   constructor(options: TxLineAdapterOptions) {
@@ -206,42 +208,51 @@ export class TxLineAdapter implements OddsFeedAdapter {
   // ---- SSE streams ----
 
   private ensureStream(kind: 'odds' | 'scores'): void {
-    if (this.streams[kind].abort !== null) return;
+    if (this.streams[kind].looping) return;
     void this.streamLoop(kind);
   }
 
   private async streamLoop(kind: 'odds' | 'scores'): Promise<void> {
     const state = this.streams[kind];
+    if (state.looping) return;
+    state.looping = true;
     const fetchFn = this.fetchFn ?? fetch;
 
-    while (this.connected) {
-      const abort = new AbortController();
-      state.abort = abort;
-      try {
-        let res = await fetchFn(`${this.origin}/api/${kind}/stream`, {
-          headers: { ...this.authHeaders(), accept: 'text/event-stream', 'accept-encoding': 'deflate' },
-          signal: abort.signal,
-        });
-        if (res.status === 401 || res.status === 403) {
-          await this.renewJwt();
-          res = await fetchFn(`${this.origin}/api/${kind}/stream`, {
+    try {
+      while (this.connected) {
+        const abort = new AbortController();
+        state.abort = abort;
+        try {
+          let res = await fetchFn(`${this.origin}/api/${kind}/stream`, {
             headers: { ...this.authHeaders(), accept: 'text/event-stream', 'accept-encoding': 'deflate' },
             signal: abort.signal,
           });
-        }
-        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+          if (res.status === 401 || res.status === 403) {
+            await this.renewJwt();
+            res = await fetchFn(`${this.origin}/api/${kind}/stream`, {
+              headers: { ...this.authHeaders(), accept: 'text/event-stream', 'accept-encoding': 'deflate' },
+              signal: abort.signal,
+            });
+          }
+          if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
 
-        state.backoffMs = 0;
-        state.lastEventAt = Date.now();
-        await this.consumeSse(kind, res.body, state);
-      } catch (err) {
-        if (!this.connected) break;
-        state.backoffMs = state.backoffMs === 0 ? BACKOFF_START_MS : Math.min(state.backoffMs * 2, BACKOFF_CAP_MS);
-        this.onParseError?.({ fixtureId: '*', reason: `${kind} stream error, retrying in ${state.backoffMs}ms: ${err instanceof Error ? err.message : String(err)}` });
-        await new Promise((r) => setTimeout(r, state.backoffMs));
+          state.backoffMs = 0;
+          state.lastEventAt = Date.now();
+          await this.consumeSse(kind, res.body, state);
+          // A cleanly ended stream still backs off before reconnecting — a
+          // server that accepts and immediately closes must not be hammered.
+          throw new Error('stream ended');
+        } catch (err) {
+          if (!this.connected) break;
+          state.backoffMs = state.backoffMs === 0 ? BACKOFF_START_MS : Math.min(state.backoffMs * 2, BACKOFF_CAP_MS);
+          this.onParseError?.({ fixtureId: '*', reason: `${kind} stream error, retrying in ${state.backoffMs}ms: ${err instanceof Error ? err.message : String(err)}` });
+          await new Promise((r) => setTimeout(r, state.backoffMs));
+        }
       }
+    } finally {
+      state.abort = null;
+      state.looping = false;
     }
-    state.abort = null;
   }
 
   private async consumeSse(kind: 'odds' | 'scores', body: ReadableStream<Uint8Array>, state: StreamState): Promise<void> {
@@ -298,15 +309,28 @@ export class TxLineAdapter implements OddsFeedAdapter {
   // ---- record routing ----
 
   private handleOddsRecord(raw: unknown, receivedAt: number, sourceFixtureId?: string): void {
+    // Audit BEFORE schema validation (DOCS.md §3.2): the packets a parser bug
+    // rejects are exactly the ones the provenance log must not lose. Only the
+    // fixture filter runs first, so the account-wide stream doesn't flood the log.
+    const looseFixtureId = sourceFixtureId ?? looseFixtureIdOf(raw);
+    if (looseFixtureId === null) {
+      // No attributable FixtureId: the account-wide stream can carry any
+      // volume of these and an unattributable row can never be /verify'd —
+      // report the anomaly, don't persist it (bounds the audit table to
+      // subscribed traffic).
+      this.onParseError?.({ fixtureId: '*', reason: 'odds record without a FixtureId — reported, not audited' });
+      return;
+    }
+    if (!this.subscribed.has(looseFixtureId)) return;
+    this.onRawPacket?.({ fixtureId: looseFixtureId, body: JSON.stringify(raw), receivedAt });
+
     const rec = txOddsRecordSchema.safeParse(raw);
     if (!rec.success) {
-      this.onParseError?.({ fixtureId: sourceFixtureId ?? '*', reason: `odds record rejected: ${rec.error.issues[0]?.message ?? 'unknown'}` });
+      this.onParseError?.({ fixtureId: looseFixtureId, reason: `odds record rejected: ${rec.error.issues[0]?.message ?? 'unknown'}` });
       return;
     }
     const fixtureId = String(rec.data.FixtureId);
     if (!this.subscribed.has(fixtureId)) return;
-
-    this.onRawPacket?.({ fixtureId, body: JSON.stringify(raw), receivedAt });
 
     const { tick, reason } = toOddsTick(rec.data, receivedAt);
     if (tick === null) {
@@ -344,4 +368,13 @@ export class TxLineAdapter implements OddsFeedAdapter {
       for (const cb of this.eventCbs) cb(event);
     }
   }
+}
+
+/** Best-effort FixtureId extraction from an unvalidated record, for pre-parse audit routing. */
+function looseFixtureIdOf(raw: unknown): string | null {
+  if (typeof raw === 'object' && raw !== null && 'FixtureId' in raw) {
+    const id = (raw as { FixtureId: unknown }).FixtureId;
+    if (typeof id === 'number' || typeof id === 'string') return String(id);
+  }
+  return null;
 }

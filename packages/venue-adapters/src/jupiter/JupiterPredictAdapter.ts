@@ -1,5 +1,5 @@
 import { InsufficientDepthError, type MarketKey } from '@zygos/core';
-import type { UnsignedVenueTx, VenueAdapter, VenuePosition, VenueQuote } from '../types.js';
+import { UNMAPPED_FIXTURE_PREFIX, type UnsignedVenueTx, type VenueAdapter, type VenuePosition, type VenueQuote } from '../types.js';
 import { FeedConfigError } from '../txline/errors.js';
 import {
   jupiterMarketSchema,
@@ -72,8 +72,8 @@ export class JupiterPredictAdapter implements VenueAdapter {
     return out;
   }
 
-  async getQuote(market: MarketKey, outcome: string, side: 'BUY' | 'SELL', size: bigint): Promise<VenueQuote> {
-    const marketId = this.marketIdFor(market, outcome);
+  async getQuote(market: MarketKey, outcome: string, side: 'BUY' | 'SELL', size: bigint, fixtureId?: string): Promise<VenueQuote> {
+    const marketId = this.marketIdFor(market, outcome, fixtureId);
     const body = await this.request('GET', `/markets/${encodeURIComponent(marketId)}`);
     const m = jupiterMarketSchema.parse(body);
 
@@ -99,7 +99,7 @@ export class JupiterPredictAdapter implements VenueAdapter {
     if (!(fraction > 0 && fraction <= 1)) {
       throw new RangeError(`lock fraction out of (0,1]: ${fraction}`);
     }
-    const marketId = this.marketIdFor(position.market, position.outcome);
+    const marketId = this.marketIdFor(position.market, position.outcome, position.fixtureId);
     const binding = this.bindings.get(marketId);
     const holdIsYes = binding === undefined || binding.yesOutcome === position.outcome;
 
@@ -121,10 +121,15 @@ export class JupiterPredictAdapter implements VenueAdapter {
     return { txBase64: order.transaction, worstCasePrice: quote.price };
   }
 
-  /** Direct close: DELETE /positions/{pubkey} sells all contracts. Partial close falls back to the synthetic hedge. */
+  /**
+   * Direct close: DELETE /positions/{pubkey} sells ALL contracts, so only a
+   * full close (fraction 1) is supported. A partial close must be planned as
+   * a synthetic hedge by the caller — silently substituting one here would
+   * execute different economics (and a SELL-priced quote) than displayed.
+   */
   async buildCloseTx(_wallet: string, position: VenuePosition, fraction: number, quote: VenueQuote): Promise<UnsignedVenueTx> {
     if (fraction !== 1) {
-      return this.buildHedgeTx(_wallet, position, fraction, quote);
+      throw new RangeError(`direct close sells the whole position — fraction must be 1, got ${fraction}`);
     }
     const body = await this.request('DELETE', `/positions/${encodeURIComponent(position.positionRef)}`);
     const order = jupiterOrderResponseSchema.parse(body);
@@ -135,7 +140,7 @@ export class JupiterPredictAdapter implements VenueAdapter {
     const binding = this.bindings.get(pos.marketId);
     return {
       positionRef: pos.positionPubkey,
-      fixtureId: binding?.fixtureId ?? `unmapped:${pos.marketId}`,
+      fixtureId: binding?.fixtureId ?? `${UNMAPPED_FIXTURE_PREFIX}${pos.marketId}`,
       market: binding?.market ?? { kind: '1X2' },
       outcome: binding ? (pos.isYes ? binding.yesOutcome : `NOT_${binding.yesOutcome}`) : pos.isYes ? 'YES' : 'NO',
       // Each contract pays $1 = 1_000_000 micro-USD, so size in payout base units:
@@ -144,12 +149,15 @@ export class JupiterPredictAdapter implements VenueAdapter {
     };
   }
 
-  private marketIdFor(market: MarketKey, outcome: string): string {
+  private marketIdFor(market: MarketKey, outcome: string, fixtureId?: string): string {
     for (const [marketId, b] of this.bindings) {
+      if (fixtureId !== undefined && b.fixtureId !== fixtureId) continue;
       const sameMarket = b.market.kind === market.kind && (market.kind !== 'TOTAL' || (b.market as { line?: number }).line === market.line);
       if (sameMarket && (b.yesOutcome === outcome || `NOT_${b.yesOutcome}` === outcome)) return marketId;
     }
-    throw new FeedConfigError(`no Jupiter market bound for ${market.kind}/${outcome} — fixture matcher has not mapped it yet`);
+    throw new FeedConfigError(
+      `no Jupiter market bound for ${fixtureId !== undefined ? `${fixtureId}/` : ''}${market.kind}/${outcome} — fixture matcher has not mapped it yet`,
+    );
   }
 
   private async request(method: 'GET' | 'POST' | 'DELETE', path: string, body?: object): Promise<unknown> {

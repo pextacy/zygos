@@ -23,10 +23,22 @@ describe('parseMarket', () => {
     expect(parseMarket('OU', '3.25', '')).toEqual({ kind: 'TOTAL', line: 3.25 });
   });
 
+  it('keeps the broad goal-total vocabulary (substring match), not just the short forms', () => {
+    expect(parseMarket('Total Goals Over/Under', '2.5', 'FT')).toEqual({ kind: 'TOTAL', line: 2.5 });
+    expect(parseMarket('Match Total', '2.5', 'FT')).toEqual({ kind: 'TOTAL', line: 2.5 });
+    expect(parseMarket('Over Under Goals', '1.5', 'FT')).toEqual({ kind: 'TOTAL', line: 1.5 });
+  });
+
   it('skips non-full-time periods and unknown market types', () => {
     expect(parseMarket('1x2', null, 'H1')).toBeNull();
     expect(parseMarket('Asian Handicap', '-0.5', null)).toBeNull();
     expect(parseMarket('Total Goals', 'NA', null)).toBeNull();
+  });
+
+  it('never maps non-goal totals (corners/cards) onto the goals TOTAL market', () => {
+    expect(parseMarket('Total Corners', '9.5', 'FT')).toBeNull();
+    expect(parseMarket('Total Cards', '4.5', 'FT')).toBeNull();
+    expect(parseMarket('Total Bookings', '2.5', 'FT')).toBeNull();
   });
 });
 
@@ -82,6 +94,24 @@ describe('toOddsTick', () => {
     const unknownMarket = toOddsTick(txOddsRecordSchema.parse({ ...base, SuperOddsType: 'Corners Race' }), 0);
     expect(unknownMarket.tick).toBeNull();
     expect(unknownMarket.reason).toContain('unmapped market');
+  });
+
+  it('rejects prototype-chain outcome names — feed strings must miss, not resolve', () => {
+    const { tick, reason } = toOddsTick(txOddsRecordSchema.parse({ ...base, PriceNames: ['1', 'constructor', '2'] }), 0);
+    expect(tick).toBeNull();
+    expect(reason).toContain('unmapped outcome');
+  });
+
+  it('rejects duplicate outcome names (they would collapse in the consensus fold)', () => {
+    const { tick, reason } = toOddsTick(txOddsRecordSchema.parse({ ...base, PriceNames: ['1', '1', '2'] }), 0);
+    expect(tick).toBeNull();
+    expect(reason).toContain('outcome set');
+  });
+
+  it('rejects a 2-way record on a 3-way 1X2 market (different probability space)', () => {
+    const { tick, reason } = toOddsTick(txOddsRecordSchema.parse({ ...base, PriceNames: ['1', '2'], Prices: [1900, 1900] }), 0);
+    expect(tick).toBeNull();
+    expect(reason).toContain('outcome set');
   });
 
   it('rejects odds at or below 1.000 (price ≤ 1000)', () => {

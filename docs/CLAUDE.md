@@ -24,7 +24,7 @@ zygos/
 ├── apps/
 │   ├── web/          # Next.js 14 (App Router) + Tailwind + wallet-adapter. UI only.
 │   └── server/       # Node 20 + Fastify. TxLINE ingest, consensus engine host,
-│                     # valuation WebSocket, tx building endpoints, SQLite audit log.
+│                     # valuation WebSocket, tx building endpoints, Postgres audit log.
 ├── packages/
 │   ├── core/         # Pure TypeScript, zero I/O: de-vig math, consensus,
 │   │                 # hedge sizing, payout matrices, types. Most tests live here.
@@ -94,7 +94,7 @@ TXLINE_API_TOKEN=      # activated via `pnpm -F server txline:activate` (on-chai
 JUPITER_API_KEY=       # Jupiter Predict API (candidate venue, docs/venue-selection.md)
 RPC_URL=               # Helius/Triton mainnet or devnet endpoint
 CLUSTER=               # 'mainnet-beta' | 'devnet' — must match venue adapter deployment
-DATABASE_URL=          # SQLite file path, default ./data/zygos.db
+DATABASE_URL=          # postgres://… (Neon) | local dir → embedded PGlite | memory:// (tests); default ./data/pglite
 COMMITMENT_MEMO=true   # write on-chain lock commitments (FR-33)
 ```
 

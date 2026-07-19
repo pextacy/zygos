@@ -1,9 +1,16 @@
-# Fly.io config (DOCS.md §10): single machine in fra, SQLite on a volume.
+# Fly.io config (DOCS.md §10): single machine in fra; DB is Neon Postgres.
 # Deploy (after `fly auth login`):
 #   fly launch --no-deploy --copy-config --name zygos-server   # first time
-#   fly volumes create zygos_data --region fra --size 1        # first time
-#   fly secrets set TXLINE_ORIGIN=... TXLINE_API_TOKEN=... JUPITER_API_KEY=... RPC_URL=... CLUSTER=devnet
+#   fly secrets set DATABASE_URL='postgres://...neon.tech/neondb?sslmode=require' \
+#     TXLINE_ORIGIN=... TXLINE_API_TOKEN=... JUPITER_API_KEY=... RPC_URL=... CLUSTER=devnet \
+#     DELEGATION_ENC_KEY=... WEB_ORIGIN=https://<your-web-app> ADMIN_WALLETS=<wallet,...>
+# DELEGATION_ENC_KEY is required in production (at-rest encryption of pre-signed
+# delegation txs); without DATABASE_URL the server warns loudly at boot — the
+# PGlite fallback is EPHEMERAL unless the volume below is created and mounted.
 #   fly deploy --dockerfile Dockerfile --build-context ../..
+# Without a DATABASE_URL secret the server falls back to embedded PGlite at
+# /data/pglite — for that fallback only, create a volume and uncomment [mounts]:
+#   fly volumes create zygos_data --region fra --size 1
 app = "zygos-server"
 primary_region = "fra"
 
@@ -12,12 +19,11 @@ primary_region = "fra"
 
 [env]
   PORT = "8080"
-  DATABASE_URL = "/data/zygos.db"
   COMMITMENT_MEMO = "true"
 
-[mounts]
-  source = "zygos_data"
-  destination = "/data"
+# [mounts]                      # only for the PGlite fallback (no Neon secret)
+#   source = "zygos_data"
+#   destination = "/data"
 
 [http_service]
   internal_port = 8080

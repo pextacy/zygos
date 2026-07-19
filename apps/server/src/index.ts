@@ -5,12 +5,15 @@ import { Connection, PublicKey } from '@solana/web3.js';
 import { marketKeyString, SimulationFailedError } from '@zygos/core';
 import { JupiterPredictAdapter, TxLineAdapter } from '@zygos/venue-adapters';
 import { verifyWalletAuth, type WalletAuth } from './auth.js';
+import { parseDelegationKey } from './crypto.js';
+import { BindingRegistry, BindingValidationError } from './bindings.js';
 import { buildUnsignedMemoTx, ruleCommitment } from './chain/memo.js';
 import { TxOracleValidator } from './chain/txoracle.js';
-import { openDb, packets } from './db.js';
+import { dbKind, openDb, packets } from './db.js';
 import { loadEnv } from './env.js';
-import { FeedService } from './feed.js';
+import { FeedService, SubscriptionLimitError } from './feed.js';
 import { HedgeOrchestrator, PreviewError } from './hedge.js';
+import { LockLedger } from './ledger.js';
 import { RuleEngine, type RuleTemplate } from './rules.js';
 import { ValuationService } from './valuation.js';
 import { attachWs } from './ws.js';
@@ -29,7 +32,23 @@ await app.register(cors, {
   origin: env.WEB_ORIGIN ? env.WEB_ORIGIN.split(',').map((o) => o.trim()) : true,
 });
 
-const db = openDb(env.DATABASE_URL);
+const db = await openDb(env.DATABASE_URL);
+if (process.env.NODE_ENV === 'production' && dbKind(env.DATABASE_URL) === 'pglite-dir') {
+  // Deploying without a DATABASE_URL secret lands on the Dockerfile's
+  // /data/pglite fallback — ephemeral unless a volume is mounted at /data.
+  // Silent loss here would erase rules, pre-signed delegations, the lock
+  // ledger and market bindings on every redeploy (fly.toml has the volume
+  // instructions).
+  app.log.warn(
+    { databaseUrl: env.DATABASE_URL },
+    'PRODUCTION BOOT ON EMBEDDED PGlite: set the DATABASE_URL secret (Neon) or mount a persistent volume at this path — otherwise ALL state (rules, delegations, lock ledger, bindings) is lost on redeploy/restart',
+  );
+}
+/** Lock ledger is DB-only: history stays queryable even when feed/venue are down. */
+const ledger = new LockLedger(db);
+/** Market bindings are DB-only too: editable before the venue key even exists. */
+const bindingRegistry = await BindingRegistry.open(db);
+const adminWallets = env.ADMIN_WALLETS?.split(',').map((w) => w.trim()) ?? null;
 
 /**
  * The feed only exists with real credentials (CLAUDE.md §2.1): without
@@ -55,8 +74,8 @@ if (env.TXLINE_API_TOKEN) {
 
 /**
  * Venue adapter + valuation (T1.5/T1.6). Market bindings (TxLINE fixture ↔
- * Jupiter market) start empty and are populated by the fixture matcher during
- * the Day-1 liquidity gate; unmapped positions surface as UNMAPPED_OUTCOME.
+ * Jupiter market) come from the persistent BindingRegistry (managed via
+ * /bindings); positions on still-unbound markets surface as UNMAPPED_OUTCOME.
  */
 let valuation: ValuationService | null = null;
 let hedge: HedgeOrchestrator | null = null;
@@ -77,10 +96,16 @@ if (connection) {
   }
 }
 if (feed && env.JUPITER_API_KEY) {
-  const venue = new JupiterPredictAdapter({ apiKey: env.JUPITER_API_KEY });
+  // The registry's live map is shared by reference: binding upserts apply
+  // to position mapping and quote routing immediately, no restart.
+  const venue = new JupiterPredictAdapter({ apiKey: env.JUPITER_API_KEY, bindings: bindingRegistry.map });
   valuation = new ValuationService(venue, feed, app.log);
-  hedge = new HedgeOrchestrator(valuation, feed, connection, app.log);
-  ruleEngine = new RuleEngine(db, valuation, hedge, feed, app.log, connection);
+  hedge = new HedgeOrchestrator(valuation, feed, connection, app.log, ledger);
+  const delegationKey = parseDelegationKey(env.DELEGATION_ENC_KEY);
+  if (!delegationKey) {
+    app.log.warn('DELEGATION_ENC_KEY not set — pre-signed delegation txs are stored in PLAINTEXT (set it before production)');
+  }
+  ruleEngine = new RuleEngine(db, valuation, hedge, feed, app.log, connection, ledger, delegationKey);
   app.log.info({ venue: venue.venueId }, 'venue adapter + hedge + rules configured');
 } else if (feed) {
   app.log.warn('JUPITER_API_KEY not set — positions cannot be read or valued');
@@ -90,6 +115,11 @@ function mapHedgeError(err: unknown, reply: { code: (n: number) => { send: (b: o
   if (err instanceof PreviewError) return reply.code(err.status).send({ error: err.message });
   if (err instanceof SimulationFailedError) return reply.code(409).send({ error: `simulation failed — no signature prompt allowed: ${err.message}` });
   throw err;
+}
+
+/** Handlers destructure req.body directly; a request with no JSON body must be a 400, not a TypeError-driven 500. */
+function hasBody(req: { body: unknown }): boolean {
+  return typeof req.body === 'object' && req.body !== null;
 }
 
 app.get('/healthz', async () => {
@@ -127,11 +157,13 @@ app.get('/fixtures', async (_req, reply) => {
   };
 });
 
+const BASE58_WALLET = /^[1-9A-HJ-NP-Za-km-z]{32,44}$/;
+
 app.get<{ Params: { wallet: string } }>('/positions/:wallet', async (req, reply) => {
   if (!feed) return reply.code(503).send({ error: 'feed not configured' });
   if (!valuation) return reply.code(503).send({ error: 'no venue adapter configured — set JUPITER_API_KEY' });
   const wallet = req.params.wallet;
-  if (!/^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(wallet)) {
+  if (!BASE58_WALLET.test(wallet)) {
     return reply.code(400).send({ error: 'not a base58 Solana address' });
   }
   await valuation.refreshPositions(wallet);
@@ -147,10 +179,10 @@ app.get<{ Params: { wallet: string } }>('/positions/:wallet', async (req, reply)
 app.post<{ Body: { packetId: string } }>('/verify/odds', async (req, reply) => {
   if (!txlineAdapter) return reply.code(503).send({ error: 'feed not configured' });
   if (!oracleValidator) return reply.code(503).send({ error: 'RPC not configured — on-chain verification unavailable' });
-  const packetId = req.body.packetId;
-  if (!packetId) return reply.code(400).send({ error: 'packetId required' });
+  const packetId = hasBody(req) ? req.body.packetId : undefined;
+  if (!packetId || typeof packetId !== 'string') return reply.code(400).send({ error: 'packetId required' });
 
-  const row = db.select().from(packets).where(eq(packets.packetId, packetId)).all()[0];
+  const row = (await db.select().from(packets).where(eq(packets.packetId, packetId)))[0];
   if (!row) return reply.code(404).send({ error: 'packet not in the audit log' });
 
   try {
@@ -170,7 +202,11 @@ interface HedgePreviewBody {
 }
 app.post<{ Body: HedgePreviewBody }>('/hedge/preview', async (req, reply) => {
   if (!hedge) return reply.code(503).send({ error: 'hedge engine not configured (feed + venue required)' });
+  if (!hasBody(req)) return reply.code(400).send({ error: 'JSON body required' });
   const { wallet, positionRef, fraction } = req.body;
+  if (typeof wallet !== 'string' || typeof positionRef !== 'string') {
+    return reply.code(400).send({ error: 'wallet and positionRef must be strings' });
+  }
   if (typeof fraction !== 'number' || !(fraction > 0 && fraction <= 1)) {
     return reply.code(400).send({ error: 'fraction must be in (0,1]' });
   }
@@ -187,18 +223,141 @@ interface HedgeConfirmBody {
   fraction: number;
   signature: string;
   packetIds: string[];
+  /** Handle from /hedge/preview — lets the ledger record the server-built plan the user signed against. */
+  previewId?: string;
+  /** Present when the lock was signed from a RULE_FIRED prompt. */
+  ruleId?: string;
   auth: WalletAuth;
 }
 app.post<{ Body: HedgeConfirmBody }>('/hedge/confirm', async (req, reply) => {
   if (!hedge) return reply.code(503).send({ error: 'hedge engine not configured' });
+  if (!hasBody(req)) return reply.code(400).send({ error: 'JSON body required' });
   const authResult = verifyWalletAuth('hedge-confirm', req.body.auth);
   if (!authResult.ok) return reply.code(401).send({ error: authResult.reason });
   if (req.body.auth.wallet !== req.body.wallet) return reply.code(401).send({ error: 'auth wallet mismatch' });
+  if (typeof req.body.positionRef !== 'string') return reply.code(400).send({ error: 'positionRef must be a string' });
+  if (typeof req.body.fraction !== 'number' || !(req.body.fraction > 0 && req.body.fraction <= 1)) {
+    return reply.code(400).send({ error: 'fraction must be in (0,1]' });
+  }
+  // packetIds/signature land in the lock ledger — bound them so a client can't
+  // stuff arbitrary blobs into the durable provenance record.
+  const packetIds = req.body.packetIds ?? [];
+  if (!Array.isArray(packetIds) || packetIds.length > 64 || packetIds.some((p) => typeof p !== 'string' || p.length > 128)) {
+    return reply.code(400).send({ error: 'packetIds must be an array of ≤64 short strings' });
+  }
+  if (req.body.signature !== undefined && (typeof req.body.signature !== 'string' || req.body.signature.length > 128)) {
+    return reply.code(400).send({ error: 'signature must be a short string' });
+  }
   try {
-    return await hedge.confirm(req.body.wallet, req.body.positionRef, req.body.fraction, req.body.packetIds ?? []);
+    return await hedge.confirm(req.body.wallet, req.body.positionRef, req.body.fraction, packetIds, {
+      ...(req.body.signature !== undefined ? { signature: req.body.signature } : {}),
+      ...(req.body.previewId !== undefined ? { previewId: req.body.previewId } : {}),
+      ...(req.body.ruleId !== undefined ? { ruleId: req.body.ruleId } : {}),
+    });
   } catch (err) {
     return mapHedgeError(err, reply);
   }
+});
+
+/**
+ * Lock ledger (extends FR-33): per-wallet history of verified executed locks
+ * with the edge each captured vs TxLINE fair value, plus cumulative stats.
+ */
+app.get<{ Params: { wallet: string } }>('/locks/:wallet', async (req, reply) => {
+  const wallet = req.params.wallet;
+  if (!BASE58_WALLET.test(wallet)) {
+    return reply.code(400).send({ error: 'not a base58 Solana address' });
+  }
+  const lockList = await ledger.list(wallet);
+  return { wallet, locks: lockList, stats: await ledger.stats(wallet, lockList) };
+});
+
+/**
+ * Attach the memo-commitment signature to a recorded lock (FR-33): completes
+ * the audit chain lock-tx → memo-tx once the user has signed the memo.
+ */
+app.patch<{ Params: { id: string }; Body: { memoSig: string; auth: WalletAuth } }>('/locks/:id/memo', async (req, reply) => {
+  if (!hasBody(req)) return reply.code(400).send({ error: 'JSON body required' });
+  const authResult = verifyWalletAuth('locks-memo', req.body.auth);
+  if (!authResult.ok) return reply.code(401).send({ error: authResult.reason });
+  if (typeof req.body.memoSig !== 'string' || req.body.memoSig.length === 0 || req.body.memoSig.length > 128) {
+    return reply.code(400).send({ error: 'memoSig must be a short string' });
+  }
+  const attached = await ledger.attachMemoSig(req.params.id, req.body.auth.wallet, req.body.memoSig);
+  return attached ? { attached: true } : reply.code(404).send({ error: 'lock not found for this wallet' });
+});
+
+/**
+ * Market binding registry (closes README known-limitation #1): persistent
+ * TxLINE fixture ↔ venue market mapping, editable at the liquidity gate
+ * without a redeploy. Reads are public; writes need a wallet signature and,
+ * when ADMIN_WALLETS is set, membership in it.
+ */
+function bindingAdminCheck(action: string, auth: WalletAuth): { ok: true } | { ok: false; status: number; error: string } {
+  const authResult = verifyWalletAuth(action, auth);
+  if (!authResult.ok) return { ok: false, status: 401, error: authResult.reason };
+  if (adminWallets && !adminWallets.includes(auth.wallet)) {
+    return { ok: false, status: 403, error: 'wallet not in ADMIN_WALLETS — binding registry is admin-only on this deployment' };
+  }
+  return { ok: true };
+}
+
+app.get('/bindings', async () => {
+  return { bindings: await bindingRegistry.list(), adminRestricted: adminWallets !== null };
+});
+
+/** Everything the binding form needs: venue marketIds seen but unbound, plus the fixtures/markets the feed is tracking. */
+app.get('/bindings/candidates', async () => {
+  const now = Date.now();
+  const markets = feed
+    ? feed.snapshots(now).map((s) => ({ fixtureId: s.fixtureId, market: marketKeyString(s.market) }))
+    : [];
+  return {
+    unmappedMarketIds: valuation?.unmappedMarketIds() ?? [],
+    fixtures: feed?.subscribedFixtures() ?? [],
+    markets,
+  };
+});
+
+interface BindingUpsertBody {
+  fixtureId: string;
+  market: string;
+  yesOutcome: string;
+  note?: string;
+  auth: WalletAuth;
+}
+app.put<{ Params: { marketId: string }; Body: BindingUpsertBody }>('/bindings/:marketId', async (req, reply) => {
+  if (!hasBody(req)) return reply.code(400).send({ error: 'JSON body required' });
+  const check = bindingAdminCheck('bindings-upsert', req.body.auth);
+  if (!check.ok) return reply.code(check.status).send({ error: check.error });
+  try {
+    const binding = await bindingRegistry.upsert({
+      marketId: req.params.marketId,
+      fixtureId: req.body.fixtureId ?? '',
+      market: req.body.market ?? '',
+      yesOutcome: req.body.yesOutcome ?? '',
+      ...(req.body.note !== undefined ? { note: req.body.note } : {}),
+      createdBy: req.body.auth.wallet,
+    });
+    // Re-map cached positions right away so UNMAPPED_OUTCOME rows resolve.
+    await valuation?.refreshAllWallets();
+    app.log.info({ marketId: binding.marketId, fixtureId: binding.fixtureId, market: binding.market }, 'market binding upserted');
+    return { binding };
+  } catch (err) {
+    if (err instanceof BindingValidationError) return reply.code(400).send({ error: err.message });
+    throw err;
+  }
+});
+
+app.delete<{ Params: { marketId: string }; Body: { auth: WalletAuth } }>('/bindings/:marketId', async (req, reply) => {
+  if (!hasBody(req)) return reply.code(400).send({ error: 'JSON body required' });
+  const check = bindingAdminCheck('bindings-delete', req.body.auth);
+  if (!check.ok) return reply.code(check.status).send({ error: check.error });
+  const removed = await bindingRegistry.remove(req.params.marketId);
+  if (!removed) return reply.code(404).send({ error: 'no binding for that marketId' });
+  await valuation?.refreshAllWallets();
+  app.log.info({ marketId: req.params.marketId }, 'market binding removed');
+  return { removed: true };
 });
 
 interface RuleCreateBody {
@@ -207,16 +366,25 @@ interface RuleCreateBody {
   template: RuleTemplate;
   team: 'HOME' | 'AWAY';
   fraction: number;
+  /** PRICE_LOCK only: consensus-probability threshold in (0,1). */
+  threshold?: number;
+  /** PRICE_LOCK only: fire when consensus crosses ABOVE or BELOW the threshold. */
+  direction?: 'ABOVE' | 'BELOW';
   auth: WalletAuth;
 }
 app.post<{ Body: RuleCreateBody }>('/rules', async (req, reply) => {
   if (!ruleEngine) return reply.code(503).send({ error: 'rule engine not configured' });
+  if (!hasBody(req)) return reply.code(400).send({ error: 'JSON body required' });
   const authResult = verifyWalletAuth('rules-create', req.body.auth);
   if (!authResult.ok) return reply.code(401).send({ error: authResult.reason });
   if (req.body.auth.wallet !== req.body.wallet) return reply.code(401).send({ error: 'auth wallet mismatch' });
-  if (req.body.template !== 'GOAL_LOCK' && req.body.template !== 'RED_CARD_REDUCE') {
+  if (req.body.template !== 'GOAL_LOCK' && req.body.template !== 'RED_CARD_REDUCE' && req.body.template !== 'PRICE_LOCK') {
     return reply.code(400).send({ error: 'unknown template' });
   }
+  if (req.body.team !== 'HOME' && req.body.team !== 'AWAY') {
+    return reply.code(400).send({ error: 'team must be HOME or AWAY' });
+  }
+  if (typeof req.body.positionRef !== 'string') return reply.code(400).send({ error: 'positionRef must be a string' });
   try {
     const rule = await ruleEngine.create(req.body);
     // Intent pre-commitment (FR-41): server builds the unsigned memo tx; only the user's wallet signs it.
@@ -238,7 +406,9 @@ app.post<{ Body: RuleCreateBody }>('/rules', async (req, reply) => {
 app.get<{ Params: { wallet: string } }>('/rules/:wallet', async (req, reply) => {
   if (!ruleEngine) return reply.code(503).send({ error: 'rule engine not configured' });
   const engine = ruleEngine;
-  return { rules: engine.list(req.params.wallet).map((rule) => ({ ...rule, delegation: engine.delegationStatus(rule.id) })) };
+  const list = await engine.list(req.params.wallet);
+  const statuses = await engine.delegationStatuses(list.map((r) => r.id));
+  return { rules: list.map((rule) => ({ ...rule, delegation: statuses.get(rule.id) ?? null })) };
 });
 
 /**
@@ -247,6 +417,7 @@ app.get<{ Params: { wallet: string } }>('/rules/:wallet', async (req, reply) => 
  */
 app.post<{ Params: { id: string }; Body: { auth: WalletAuth; noncePubkey?: string } }>('/rules/:id/delegate', async (req, reply) => {
   if (!ruleEngine) return reply.code(503).send({ error: 'rule engine not configured' });
+  if (!hasBody(req)) return reply.code(400).send({ error: 'JSON body required' });
   const authResult = verifyWalletAuth('rules-delegate', req.body.auth);
   if (!authResult.ok) return reply.code(401).send({ error: authResult.reason });
   try {
@@ -258,12 +429,32 @@ app.post<{ Params: { id: string }; Body: { auth: WalletAuth; noncePubkey?: strin
 
 app.put<{ Params: { id: string }; Body: { auth: WalletAuth; noncePubkey: string; signedTxBase64: string } }>('/rules/:id/delegate', async (req, reply) => {
   if (!ruleEngine) return reply.code(503).send({ error: 'rule engine not configured' });
+  if (!hasBody(req)) return reply.code(400).send({ error: 'JSON body required' });
   const authResult = verifyWalletAuth('rules-delegate-store', req.body.auth);
   if (!authResult.ok) return reply.code(401).send({ error: authResult.reason });
-  if (!req.body.noncePubkey || !req.body.signedTxBase64) return reply.code(400).send({ error: 'noncePubkey and signedTxBase64 required' });
+  if (typeof req.body.noncePubkey !== 'string' || !req.body.noncePubkey || typeof req.body.signedTxBase64 !== 'string' || !req.body.signedTxBase64) {
+    return reply.code(400).send({ error: 'noncePubkey and signedTxBase64 required' });
+  }
   try {
-    ruleEngine.storeDelegation(req.params.id, req.body.auth.wallet, req.body.noncePubkey, req.body.signedTxBase64);
-    return { delegated: true, status: ruleEngine.delegationStatus(req.params.id) };
+    await ruleEngine.storeDelegation(req.params.id, req.body.auth.wallet, req.body.noncePubkey, req.body.signedTxBase64);
+    return { delegated: true, status: await ruleEngine.delegationStatus(req.params.id) };
+  } catch (err) {
+    return mapHedgeError(err, reply);
+  }
+});
+
+/**
+ * Revoke a delegation (security-review req 1): erases the stored pre-signed tx
+ * server-side immediately and returns an unsigned nonce-advance tx — once the
+ * wallet signs and lands it, leaked copies of the pre-signed tx are void too.
+ */
+app.post<{ Params: { id: string }; Body: { auth: WalletAuth } }>('/rules/:id/revoke', async (req, reply) => {
+  if (!ruleEngine) return reply.code(503).send({ error: 'rule engine not configured' });
+  if (!hasBody(req)) return reply.code(400).send({ error: 'JSON body required' });
+  const authResult = verifyWalletAuth('rules-revoke', req.body.auth);
+  if (!authResult.ok) return reply.code(401).send({ error: authResult.reason });
+  try {
+    return await ruleEngine.revokeDelegation(req.params.id, req.body.auth.wallet);
   } catch (err) {
     return mapHedgeError(err, reply);
   }
@@ -271,9 +462,10 @@ app.put<{ Params: { id: string }; Body: { auth: WalletAuth; noncePubkey: string;
 
 app.delete<{ Params: { id: string }; Body: { auth: WalletAuth } }>('/rules/:id', async (req, reply) => {
   if (!ruleEngine) return reply.code(503).send({ error: 'rule engine not configured' });
+  if (!hasBody(req)) return reply.code(400).send({ error: 'JSON body required' });
   const authResult = verifyWalletAuth('rules-delete', req.body.auth);
   if (!authResult.ok) return reply.code(401).send({ error: authResult.reason });
-  const removed = ruleEngine.remove(req.params.id, req.body.auth.wallet);
+  const removed = await ruleEngine.remove(req.params.id, req.body.auth.wallet);
   return removed ? { removed: true } : reply.code(404).send({ error: 'rule not found for this wallet' });
 });
 
@@ -282,14 +474,52 @@ app.post<{ Body: { fixtureIds: string[] } }>('/fixtures/subscribe', { schema: { 
   if (!feed) {
     return reply.code(503).send({ error: 'feed not configured' });
   }
-  await feed.subscribe(req.body.fixtureIds);
+  try {
+    await feed.subscribe(req.body.fixtureIds);
+  } catch (err) {
+    if (err instanceof SubscriptionLimitError) return reply.code(429).send({ error: err.message });
+    throw err;
+  }
   return { subscribed: feed.subscribedFixtures() };
 });
 
 await app.ready();
+let wss: ReturnType<typeof attachWs> | null = null;
 if (feed) {
-  attachWs(app.server, feed, valuation, ruleEngine, app.log);
+  wss = attachWs(app.server, feed, valuation, ruleEngine, app.log);
 }
+
+/**
+ * Graceful shutdown (Fly/Docker send SIGTERM on deploy/restart): stop taking
+ * connections, drop WS clients, close the TxLINE stream, then exit. A 10s
+ * deadline guarantees the process never hangs a deploy; Postgres (Neon) is
+ * durable across hard exits, this just makes the common path clean.
+ */
+let shuttingDown = false;
+async function shutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  app.log.info({ signal }, 'graceful shutdown started');
+  setTimeout(() => process.exit(1), 10_000).unref();
+  try {
+    if (wss) {
+      for (const client of wss.clients) client.terminate();
+      wss.close();
+    }
+    if (txlineAdapter) await txlineAdapter.disconnect();
+    // Let in-flight ticks finish their audit inserts — a tick consumed without
+    // its provenance row is exactly what the serialized chain exists to prevent.
+    if (feed) await feed.flushTicks();
+    await app.close();
+    app.log.info('shutdown complete');
+    process.exit(0);
+  } catch (err) {
+    app.log.error({ err: err instanceof Error ? err.message : String(err) }, 'shutdown error');
+    process.exit(1);
+  }
+}
+process.on('SIGTERM', () => void shutdown('SIGTERM'));
+process.on('SIGINT', () => void shutdown('SIGINT'));
 
 app
   .listen({ port: env.PORT, host: env.HOST })

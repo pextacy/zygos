@@ -9,17 +9,21 @@ import type { RuleFiredFrame } from '../lib/types';
  */
 export function RuleFiredOverlay({ frame, onSign, onDismiss }: { frame: RuleFiredFrame; onSign: () => void; onDismiss: () => void }) {
   const plan = frame.preview.plan;
+  const trigger = frame.event;
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-tertiary/60 p-4 backdrop-blur-sm">
       <div className="w-full max-w-md rounded-xl border-2 border-primary bg-surface-container-lowest p-6 text-center shadow-float">
-        <div className="text-3xl">{frame.event.type === 'GOAL' ? '⚽' : '🟥'}</div>
+        <div className="text-3xl">{trigger.type === 'PRICE_CROSS' ? '🎯' : trigger.type === 'GOAL' ? '⚽' : '🟥'}</div>
         <h2 className="mt-2 text-headline-sm text-primary">
-          {frame.event.type === 'GOAL' ? 'GOAL' : 'RED CARD'}
-          {frame.event.team ? ` — ${frame.event.team}` : ''}
+          {trigger.type === 'PRICE_CROSS'
+            ? `PRICE TARGET — ${trigger.outcome} ${pct(trigger.prob)}`
+            : `${trigger.type === 'GOAL' ? 'GOAL' : 'RED CARD'}${trigger.team ? ` — ${trigger.team}` : ''}`}
         </h2>
         <p className="mt-1 text-body-sm text-outline">
-          Rule {frame.template} fired {frame.latencyMs}ms after the event
-          {frame.event.inferred && <span className="text-on-error-container"> · inferred from odds move</span>}
+          {trigger.type === 'PRICE_CROSS'
+            ? `Rule ${frame.template} fired ${frame.latencyMs}ms after TxLINE consensus crossed ${trigger.direction === 'ABOVE' ? 'above' : 'below'} ${pct(trigger.threshold)}`
+            : `Rule ${frame.template} fired ${frame.latencyMs}ms after the event`}
+          {trigger.type !== 'PRICE_CROSS' && trigger.inferred && <span className="text-on-error-container"> · inferred from odds move</span>}
         </p>
 
         {plan.viable ? (

@@ -45,6 +45,29 @@ export function marketKeyString(market: MarketKey): string {
   return market.kind === '1X2' ? '1X2' : `TOTAL:${market.line}`;
 }
 
+/**
+ * Inverse of `marketKeyString`. Lives beside the serializer so a new market
+ * kind cannot update one without the other — a parser that lags the
+ * serializer silently drops persisted rows keyed by the new format.
+ */
+export function parseMarketKey(s: string): MarketKey | null {
+  if (s === '1X2') return { kind: '1X2' };
+  const m = /^TOTAL:(\d+(?:\.\d+)?)$/.exec(s);
+  if (m) return { kind: 'TOTAL', line: Number(m[1]) };
+  return null;
+}
+
+/**
+ * Valid outcome keys per market kind — the single vocabulary behind binding
+ * validation and outcome pickers. (The web mirrors this table in
+ * `MarketBindingsPanel` — it talks to the server over HTTP only and cannot
+ * import this package.)
+ */
+export const OUTCOMES_BY_KIND: Record<MarketKey['kind'], readonly string[]> = {
+  '1X2': ['HOME', 'DRAW', 'AWAY'],
+  TOTAL: ['OVER', 'UNDER'],
+};
+
 /** Fold one tick into (possibly fresh) market state. Ticks older than the book's current quote are ignored. */
 export function applyTick(state: MarketConsensusState | undefined, tick: OddsTick): MarketConsensusState {
   const previous = state?.books.get(tick.bookmakerId);
@@ -89,7 +112,10 @@ export function snapshot(
   // Outlier guard (DOCS.md §4.2): only meaningful with ≥3 books.
   const excluded = new Set<string>();
   if (fresh.length >= 3) {
-    const outcomes = Object.keys(fresh[0]?.probs ?? {}) as OutcomeKey[];
+    const outcomes = new Set<OutcomeKey>();
+    for (const book of fresh) {
+      for (const key of Object.keys(book.probs) as OutcomeKey[]) outcomes.add(key);
+    }
     for (const outcome of outcomes) {
       const values = fresh.map((b) => b.probs[outcome]).filter((v): v is number => v !== undefined);
       if (values.length < 3) continue;

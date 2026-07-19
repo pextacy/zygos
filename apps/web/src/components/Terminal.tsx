@@ -5,6 +5,7 @@ import { useWallet } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
 import pkg from '../../package.json';
 import { api, CLUSTER } from '../lib/server';
+import { unmappedMarketIdOf } from '../lib/positions';
 import { initialState, reducer } from '../lib/store';
 import type { ConsensusFrame, FixtureDto, HedgePreviewDto, RuleFiredFrame, ValuedPositionDto } from '../lib/types';
 import { useHealth } from '../lib/useHealth';
@@ -39,11 +40,12 @@ export function Terminal() {
   const [watched, setWatched] = useState<string[]>([]);
   const [selectedMarket, setSelectedMarket] = useState<string | null>(null);
   const [explain, setExplain] = useState<ConsensusFrame | null>(null);
-  const [lockTarget, setLockTarget] = useState<{ dto: ValuedPositionDto; prefill?: { fraction: number; preview: HedgePreviewDto } } | null>(null);
+  const [lockTarget, setLockTarget] = useState<{ dto: ValuedPositionDto; prefill?: { fraction: number; preview: HedgePreviewDto; ruleId?: string } } | null>(null);
   const [ruleTarget, setRuleTarget] = useState<ValuedPositionDto | null>(null);
   const [disclaimerAck, setDisclaimerAck] = useState(false);
   const [loadingPositions, setLoadingPositions] = useState(false);
   const [rulesRefresh, setRulesRefresh] = useState(0);
+  const [locksRefresh, setLocksRefresh] = useState(0);
 
   useZygosSocket(dispatch, wallet, watched);
   const health = useHealth();
@@ -71,7 +73,7 @@ export function Terminal() {
     api<{ positions: ValuedPositionDto[] }>(`/positions/${wallet}`)
       .then(({ positions }) => {
         dispatch({ type: 'positions', list: positions });
-        const fixtures = [...new Set(positions.map((p) => p.position.fixtureId).filter((f) => !f.startsWith('unmapped:')))];
+        const fixtures = [...new Set(positions.map((p) => p.position.fixtureId).filter((f) => unmappedMarketIdOf(f) === null))];
         if (fixtures.length > 0) setWatched((w) => [...new Set([...w, ...fixtures])]);
       })
       .catch((err: Error) => dispatch({ type: 'log', kind: 'error', text: `positions: ${err.message}` }))
@@ -225,6 +227,7 @@ export function Terminal() {
                       onRefresh={refreshPositions}
                       onLockIn={(dto) => setLockTarget({ dto })}
                       onArmRule={(dto) => setRuleTarget(dto)}
+                      onBindMarket={() => setView('analytics')}
                       className="lg:col-span-2"
                     />
                     <FeedMetricsCard
@@ -253,11 +256,13 @@ export function Terminal() {
               <PortfolioView
                 positions={positions}
                 feedStates={state.feedStates}
-                walletConnected={wallet !== null}
+                wallet={wallet}
                 loading={loadingPositions}
+                ledgerKey={locksRefresh + state.ruleExecutedSeq}
                 onRefresh={refreshPositions}
                 onLockIn={(dto) => setLockTarget({ dto })}
                 onArmRule={(dto) => setRuleTarget(dto)}
+                onBindMarket={() => setView('analytics')}
               />
             </div>
           )}
@@ -270,7 +275,7 @@ export function Terminal() {
 
           {view === 'analytics' && (
             <div className="h-full overflow-y-auto">
-              <AnalyticsView consensus={state.consensus} feedStates={state.feedStates} events={state.events} health={health} onExplain={setExplain} />
+              <AnalyticsView consensus={state.consensus} feedStates={state.feedStates} events={state.events} health={health} onExplain={setExplain} onLog={onLog} />
             </div>
           )}
         </main>
@@ -305,7 +310,10 @@ export function Terminal() {
           prefill={lockTarget.prefill}
           onClose={(locked) => {
             setLockTarget(null);
-            if (locked) refreshPositions(); // table must reflect the shrunk/closed position immediately
+            if (locked) {
+              refreshPositions(); // table must reflect the shrunk/closed position immediately
+              setLocksRefresh((k) => k + 1); // and the lock ledger must show the new entry
+            }
           }}
           onLog={onLog}
         />
@@ -332,7 +340,7 @@ export function Terminal() {
                 ruleFire.preview.plan.hedgeSize && dto.position.size !== '0'
                   ? Number((BigInt(ruleFire.preview.plan.hedgeSize) * 100n) / BigInt(dto.position.size)) / 100
                   : 1;
-              setLockTarget({ dto, prefill: { fraction: Math.min(1, Math.max(0.05, fractionPct)), preview: ruleFire.preview } });
+              setLockTarget({ dto, prefill: { fraction: Math.min(1, Math.max(0.05, fractionPct)), preview: ruleFire.preview, ruleId: ruleFire.ruleId } });
             } else {
               onLog('error', 'position for fired rule not found locally — refresh positions');
             }

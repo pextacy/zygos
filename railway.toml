@@ -1,0 +1,11 @@
+# Railway service config for the Zygos server (alternative to Fly — same
+# Dockerfile, repo-root build context so workspace COPY paths resolve).
+# Deploy: railway login → railway init → set variables → railway up
+[build]
+builder = "dockerfile"
+dockerfilePath = "apps/server/Dockerfile"
+
+[deploy]
+healthcheckPath = "/healthz"
+healthcheckTimeout = 60
+restartPolicyType = "on_failure"

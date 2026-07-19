@@ -16,7 +16,7 @@ Zygos turns the TxODDS TxLINE live odds feed into a real-time **fair-value oracl
  (WS or REST     │  (schema, retry)   (de-vig, blend)      (positions × probs)    /ws/valuations        │     terminal UI,
   polling)       │        │                                        ▲                                    │     wallet adapter,
                  │        ▼                                        │                                    │     signing
- Solana RPC ────▶│  Packet Audit Log (SQLite)          VenueAdapter.getPositions                        │
+ Solana RPC ────▶│  Packet Audit Log (Postgres)        VenueAdapter.getPositions                        │
  (Helius)        │                                     VenueAdapter.getQuote / buildHedgeTx             │
                  └──────────────────────────────────────────────────────────────────────────────────────┘
                                                     │
@@ -42,7 +42,7 @@ Design principles:
 | Web | Next.js 14 (App Router), Tailwind, `@solana/wallet-adapter` | speed of build, wallet ecosystem support |
 | Server | Fastify + `ws`, pino logging | low-latency WS fanout, minimal ceremony |
 | Chain | `@solana/web3.js` v1.x + venue SDK/IDL (Anchor client) | standard |
-| Persistence | SQLite via Drizzle ORM | audit log + rules store, zero-ops |
+| Persistence | Postgres via Drizzle ORM — Neon in production (`DATABASE_URL=postgres://…`), embedded PGlite for local dev (dir path) and tests (`memory://`) | one dialect everywhere; managed durability in prod, zero-ops locally |
 | Validation | Zod at every external boundary | runtime safety for third-party payloads |
 | Tests | Vitest + fast-check (property tests) | see CLAUDE.md §6 |
 
@@ -229,12 +229,13 @@ Inferred events are visually tagged ("⚡ inferred from odds move") in the ticke
 
 ---
 
-## 7. Rule engine v1 (`apps/server/src/rules/`)
+## 7. Rule engine (`apps/server/src/rules.ts`)
 
-- Rule shape: `{ id, wallet, positionRef, template: 'GOAL_LOCK' | 'RED_CARD_REDUCE', params: { team, fraction }, createdAt, intentHash }`.
-- Storage: server SQLite keyed by wallet (the hosted demo also keeps a client mirror in memory; browser storage APIs are not used).
-- On creation, `intentHash = sha256(canonicalJson(rule))` is written as an on-chain memo — a pre-commitment proving the rule predated the event it later fires on.
-- Firing: `MatchEvent` stream → matcher → server pre-builds and simulates the transaction → pushes a `RULE_FIRED` frame over WS → web shows a full-screen one-tap signing prompt (PRD FR-42; median ≤3s from event). v1 is deliberately human-in-the-loop; delegated session-key execution is documented as v2 in the PRD non-goals.
+- Rule shape: `{ id, wallet, positionRef, template: 'GOAL_LOCK' | 'RED_CARD_REDUCE' | 'PRICE_LOCK', params: { team, fraction, threshold?, direction? }, createdAt, intentHash, firedAt? }`.
+- Storage: server Postgres keyed by wallet (the hosted demo also keeps a client mirror in memory; browser storage APIs are not used).
+- On creation, `intentHash = sha256(canonicalJson(rule))` is written as an on-chain memo — a pre-commitment proving the rule predated the event it later fires on. `PRICE_LOCK` folds `{thresholdPpm, direction}` into the hashed body; the event templates keep the original byte layout so pre-existing commitments still recompute.
+- Event firing: `MatchEvent` stream → matcher → server pre-builds and simulates the transaction → pushes a `RULE_FIRED` frame over WS → web shows a full-screen one-tap signing prompt (PRD FR-42; median ≤3s from event). Deliberately human-in-the-loop; delegated durable-nonce execution (Phase 4) is the only auto-submit path and can only land the user's own pre-signed tx.
+- **Price firing (`PRICE_LOCK`):** evaluated on every consensus tick for the rule's fixture. Trigger = the de-vigged consensus probability of the position's outcome crossing the armed threshold (`ABOVE` = take-profit on strength, `BELOW` = cut on weakness). Edge-triggered on the cross — never level-triggered per tick, so a failed preview consumes the cross quietly and re-arms only when the price re-crosses. One-shot: a successful firing latches `firedAt` and the rule never re-fires. The firing's provenance packet is the newest packet of the crossing snapshot (FR-13/43); the `RULE_FIRED` frame carries a `PRICE_CROSS` trigger (`{outcome, prob, threshold, direction, packetId}`) instead of a `MatchEvent`. Delegated pre-signed execution works for price rules identically to event rules.
 
 ---
 
@@ -248,13 +249,18 @@ Inferred events are visually tagged ("⚡ inferred from odds move") in the ticke
 | `GET /fixtures` | subscribed World Cup fixtures with live consensus snapshot |
 | `GET /positions/:wallet` | venue positions + valuations (also streamed over WS) |
 | `POST /hedge/preview` | `{wallet, positionRef, fraction}` → payout matrix, route, fees, edge_pts, unsigned tx (base64) |
-| `POST /hedge/confirm` | `{signature}` → post-verification result + memo tx id |
+| `POST /hedge/confirm` | `{signature, previewId?}` → post-verification result + memo tx id; a verified lock is recorded in the lock ledger with the plan behind `previewId` (server-cached — client numbers are never trusted) |
+| `GET /locks/:wallet` | lock ledger: verified executed locks (route, guaranteed floor, edge vs fair at signature, tx sig, packet provenance) + cumulative stats (count, Σ floors, avg edge) |
+| `GET /bindings` / `GET /bindings/candidates` | market-binding registry (TxLINE fixture ↔ venue marketId) + form inputs from live session data (unbound marketIds seen on positions, tracked fixtures/markets) |
+| `PUT /bindings/:marketId` / `DELETE /bindings/:marketId` | upsert/remove a binding (wallet-signed; restricted to `ADMIN_WALLETS` when set). The registry's live map is shared by reference with the venue adapter, and cached positions re-map immediately — no restart |
 | `POST /rules` / `GET /rules/:wallet` / `DELETE /rules/:id` | rule CRUD (creation returns memo commitment tx id) |
+| `POST /rules/:id/revoke` | revoke a delegation: erases the stored pre-signed tx and returns an unsigned nonce-advance that voids leaked copies on-chain |
+| `PATCH /locks/:id/memo` | attach the signed memo-commitment signature to a ledger row (completes the FR-33 audit chain) |
 
 ### WebSocket `/ws`
 
 Frames (Zod-validated, discriminated union on `type`):
-`HELLO`, `SUBSCRIBE {wallet, fixtureIds}`, `VALUATION {positionRef, fair, mark, lagMs, packetIds}`, `CONSENSUS {fixtureId, market, probs, bookCount, confidence}`, `EVENT {MatchEvent}`, `RULE_FIRED {ruleId, unsignedTx}`, `FEED_HEALTH {fixtureId, state: LIVE|DEGRADED|STALE}`.
+`HELLO`, `SUBSCRIBE {wallet, fixtureIds}`, `VALUATION {positionRef, fair, mark, lagMs, packetIds}`, `CONSENSUS {fixtureId, market, probs, bookCount, confidence}`, `EVENT {MatchEvent}`, `RULE_FIRED {ruleId, event: MatchEvent | PriceTrigger, unsignedTx}`, `FEED_HEALTH {fixtureId, state: LIVE|DEGRADED|STALE}`.
 
 All mutating HTTP endpoints require a signed-message auth challenge (wallet signs a nonce) so rules and previews are bound to wallet ownership — no accounts, no passwords.
 
@@ -277,7 +283,7 @@ Compliance posture (restating PRD §5): Zygos custodies nothing, makes no odds, 
 ## 10. Deployment & operations
 
 - **Web:** Vercel (Next.js), env: `NEXT_PUBLIC_SERVER_WS_URL`, `NEXT_PUBLIC_CLUSTER`.
-- **Server:** Fly.io single region (fra — close to European match-data origins), Dockerfile in `apps/server`, SQLite on a Fly volume. One machine is sufficient for hackathon load; WS fanout is trivial at this scale.
+- **Server:** Fly.io single region (fra — close to European match-data origins), Dockerfile in `apps/server`, DB on Neon (serverless Postgres; `DATABASE_URL` as a Fly secret). One machine is sufficient for hackathon load; WS fanout is trivial at this scale.
 - **RPC:** Helius (free tier); `CLUSTER` must match the venue adapter's deployment (mainnet-beta or devnet per PLAN.md Day-1 gate).
 - **Monitoring:** `/healthz` polled by UptimeRobot; pino logs to Fly's log sink; a `cli:watch` headless mode doubles as an ops probe during matches.
 - **Runbook (match day):** start `cli:watch` for the fixture 15 min before kickoff → confirm tick flow and consensus movement → confirm `/healthz` LIVE → open terminal UI with team wallet → record.

@@ -63,7 +63,11 @@ export function valuePosition(input: PositionValuationInput): PositionValuation 
   }
 
   const grossFair = (input.size * probToScaledPrice(prob)) / PRICE_SCALE;
-  const feeBps = BigInt(input.exitFeeBps ?? 0);
+  const rawFeeBps = input.exitFeeBps ?? 0;
+  if (!Number.isFinite(rawFeeBps) || rawFeeBps < 0) {
+    throw new RangeError(`exit fee bps out of range: ${rawFeeBps}`);
+  }
+  const feeBps = BigInt(Math.round(rawFeeBps));
   const exitFeeApplied = (grossFair * feeBps) / 10_000n;
   const fairValue = grossFair - exitFeeApplied;
 

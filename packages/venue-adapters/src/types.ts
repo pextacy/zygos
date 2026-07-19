@@ -26,6 +26,19 @@ export interface OddsFeedAdapter {
   disconnect(): Promise<void>;
 }
 
+/**
+ * Marker prefix on `VenuePosition.fixtureId` for a venue market with no
+ * TxLINE binding yet: `unmapped:<venueMarketId>`. One definition serves every
+ * adapter and the server; the web mirrors it in `apps/web/src/lib/positions.ts`
+ * (web cannot import this package — it talks to the server over HTTP only).
+ */
+export const UNMAPPED_FIXTURE_PREFIX = 'unmapped:';
+
+/** The venue marketId inside an `unmapped:` fixtureId, or null for a mapped position. */
+export function unmappedMarketIdOf(fixtureId: string): string | null {
+  return fixtureId.startsWith(UNMAPPED_FIXTURE_PREFIX) ? fixtureId.slice(UNMAPPED_FIXTURE_PREFIX.length) : null;
+}
+
 /** An open position on the venue, in outcome shares paying 1 quote-token unit (DOCS.md §5). */
 export interface VenuePosition {
   /** Stable reference used across valuation, preview, and rules. */
@@ -64,7 +77,8 @@ export interface VenueAdapter {
   readonly venueId: string;
   readonly cluster: 'mainnet-beta' | 'devnet';
   getPositions(wallet: string): Promise<VenuePosition[]>;
-  getQuote(market: MarketKey, outcome: string, side: 'BUY' | 'SELL', size: bigint): Promise<VenueQuote>;
+  /** `fixtureId` disambiguates when several fixtures carry the same MarketKey — adapters must scope market routing to it when given. */
+  getQuote(market: MarketKey, outcome: string, side: 'BUY' | 'SELL', size: bigint, fixtureId?: string): Promise<VenueQuote>;
   buildHedgeTx(wallet: string, position: VenuePosition, fraction: number, quote: VenueQuote): Promise<UnsignedVenueTx>;
   /** Present only where the venue supports direct position reduction (DOCS.md §5.3). */
   buildCloseTx?(wallet: string, position: VenuePosition, fraction: number, quote: VenueQuote): Promise<UnsignedVenueTx>;

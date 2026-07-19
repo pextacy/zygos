@@ -1,7 +1,7 @@
 'use client';
 
 import { Buffer } from 'buffer';
-import { Transaction, VersionedTransaction } from '@solana/web3.js';
+import { PublicKey, SystemInstruction, SystemProgram, Transaction, TransactionInstruction, VersionedTransaction } from '@solana/web3.js';
 
 export type AnyTransaction = Transaction | VersionedTransaction;
 
@@ -11,6 +11,25 @@ export function deserializeTx(base64: string): AnyTransaction {
     return VersionedTransaction.deserialize(raw);
   } catch {
     return Transaction.from(raw);
+  }
+}
+
+/**
+ * True only when `ix` DECODES as a System nonce-advance on `noncePubkey`
+ * authorized by `wallet`. Decoding matters: a WithdrawNonceAccount or
+ * AuthorizeNonceAccount instruction also targets the nonce account with
+ * keys[0], so a programId+keys[0] heuristic would let a malicious server
+ * drain the nonce balance or steal its authority under a signature meant
+ * for an advance (mirrors the server's storeDelegation check).
+ */
+export function isNonceAdvanceFor(ix: TransactionInstruction | undefined, wallet: PublicKey, noncePubkey: string): boolean {
+  if (ix === undefined || !ix.programId.equals(SystemProgram.programId)) return false;
+  try {
+    if (SystemInstruction.decodeInstructionType(ix) !== 'AdvanceNonceAccount') return false;
+    const advance = SystemInstruction.decodeNonceAdvance(ix);
+    return advance.noncePubkey.toBase58() === noncePubkey && advance.authorizedPubkey.equals(wallet);
+  } catch {
+    return false;
   }
 }
 

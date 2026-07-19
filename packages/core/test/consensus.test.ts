@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_CONSENSUS_CONFIG, applyTick, marketKeyString, snapshot } from '../src/consensus.js';
+import { DEFAULT_CONSENSUS_CONFIG, OUTCOMES_BY_KIND, applyTick, marketKeyString, parseMarketKey, snapshot } from '../src/consensus.js';
 import type { MarketConsensusState } from '../src/consensus.js';
 import type { OddsTick } from '../src/types.js';
 
@@ -99,5 +99,19 @@ describe('consensus engine (DOCS.md §4.2)', () => {
   it('marketKeyString distinguishes market variants', () => {
     expect(marketKeyString({ kind: '1X2' })).toBe('1X2');
     expect(marketKeyString({ kind: 'TOTAL', line: 2.5 })).toBe('TOTAL:2.5');
+  });
+
+  it('parseMarketKey is the exact inverse of marketKeyString', () => {
+    for (const key of [{ kind: '1X2' } as const, { kind: 'TOTAL', line: 2.5 } as const, { kind: 'TOTAL', line: 3 } as const]) {
+      expect(parseMarketKey(marketKeyString(key))).toEqual(key);
+    }
+    expect(parseMarketKey('MONEYLINE')).toBeNull();
+    expect(parseMarketKey('TOTAL:')).toBeNull();
+    expect(parseMarketKey('')).toBeNull();
+  });
+
+  it('OUTCOMES_BY_KIND covers every market kind with its exact outcome set', () => {
+    expect(OUTCOMES_BY_KIND['1X2']).toEqual(['HOME', 'DRAW', 'AWAY']);
+    expect(OUTCOMES_BY_KIND.TOTAL).toEqual(['OVER', 'UNDER']);
   });
 });

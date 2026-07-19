@@ -74,6 +74,18 @@ Docs explicitly warn: do not assume a market exists for a fixture — inspect
 `SuperOddsType` in actual responses. Our parser maps known full-time
 result/totals vocabulary and reports (never guesses) anything else.
 
+`parseMarket` vocabulary (normalized: lowercase, `[\s_-/]` stripped):
+
+- **1X2**: exact allowlist — `1x2, matchresult, fulltimeresult, ftresult,
+  result, matchodds, moneyline, ml, wdw`.
+- **TOTAL (goals only)**: substring match on `total`/`overunder`/`ou`, with a
+  blocklist (`corner|card|booking|foul|offside|shot|throw|penalt`) so
+  non-goals totals never blend into the goals consensus. Requires a positive
+  finite `MarketParameters` line.
+- `toOddsTick` additionally rejects (whole record, with reason) any record
+  whose mapped outcomes are not EXACTLY the market's set — duplicates, a
+  missing outcome, or a 2-way record for 3-way 1X2 all return null.
+
 ## Fixture record
 
 `{Ts, StartTime, Competition, CompetitionId, FixtureGroupId, Participant1Id,

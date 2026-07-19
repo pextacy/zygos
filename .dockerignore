@@ -1,0 +1,11 @@
+# Keep the Docker build context lean and secrets out of images.
+node_modules
+**/node_modules
+.git
+.env
+**/.env
+**/.env.local
+apps/server/data
+apps/web/.next
+docs
+*.md

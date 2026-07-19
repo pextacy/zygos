@@ -10,6 +10,12 @@ export function pct(p: number | null | undefined, digits = 1): string {
   return `${(p * 100).toFixed(digits)}%`;
 }
 
+/** Integer percent from a ppm-of-1.0 value (fractions, thresholds): 700000 → "70%". */
+export function ppmPct(ppm: number | null | undefined): string {
+  if (ppm === null || ppm === undefined) return '—';
+  return `${Math.round(ppm / 10_000)}%`;
+}
+
 export function signedPts(pts: number): string {
   return `${pts >= 0 ? '+' : ''}${pts.toFixed(1)} pts`;
 }

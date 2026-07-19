@@ -1,0 +1,36 @@
+# Render blueprint for the Zygos server (Docker, repo-root build context so the
+# workspace COPY paths in apps/server/Dockerfile resolve).
+# Secrets are entered in the Render dashboard (sync:false) — never committed.
+services:
+  - type: web
+    name: zygos-server
+    runtime: docker
+    dockerfilePath: ./apps/server/Dockerfile
+    dockerContext: .
+    plan: free
+    region: frankfurt
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: PORT
+        value: "8080"
+      - key: COMMITMENT_MEMO
+        value: "true"
+      - key: CLUSTER
+        value: devnet
+      - key: TXLINE_ORIGIN
+        value: https://txline-dev.txodds.com
+      - key: TXLINE_API_TOKEN
+        sync: false
+      - key: JUPITER_API_KEY
+        sync: false
+      - key: RPC_URL
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: DELEGATION_ENC_KEY
+        sync: false
+      - key: WEB_ORIGIN
+        sync: false
+      - key: ADMIN_WALLETS
+        sync: false

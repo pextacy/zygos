@@ -21,6 +21,8 @@ export interface TerminalState {
   subscribedFixtures: string[];
   /** Bumped on RULE_FIRED/RULE_EXECUTED so rule views can refetch. */
   ruleActivitySeq: number;
+  /** Bumped only on RULE_EXECUTED — the sole rule frame that writes a ledger row, so only it should refetch lock history. */
+  ruleExecutedSeq: number;
   /** Local clock minus server clock from the WS HELLO frame; null before first connect. */
   clockSkewMs: number | null;
 }
@@ -36,6 +38,7 @@ export const initialState: TerminalState = {
   pendingRuleFire: null,
   subscribedFixtures: [],
   ruleActivitySeq: 0,
+  ruleExecutedSeq: 0,
   clockSkewMs: null,
 };
 
@@ -101,13 +104,13 @@ export function reducer(state: TerminalState, action: Action): TerminalState {
     case 'ruleFired':
       return reducer(
         { ...state, pendingRuleFire: action.frame, ruleActivitySeq: state.ruleActivitySeq + 1 },
-        { type: 'log', kind: 'rule', text: `rule ${action.frame.template} fired (${action.frame.latencyMs}ms after event, packet ${action.frame.event.packetId})` },
+        { type: 'log', kind: 'rule', text: `rule ${action.frame.template} fired (${action.frame.latencyMs}ms after trigger, packet ${action.frame.event.packetId})` },
       );
     case 'ruleExecuted':
-      return reducer({ ...state, ruleActivitySeq: state.ruleActivitySeq + 1 }, {
+      return reducer({ ...state, ruleActivitySeq: state.ruleActivitySeq + 1, ruleExecutedSeq: state.ruleExecutedSeq + 1 }, {
         type: 'log',
         kind: 'lock',
-        text: `⚡ delegated rule EXECUTED on-chain: ${action.frame.template} → ${action.frame.signature} (${action.frame.latencyMs}ms after event)`,
+        text: `⚡ delegated rule EXECUTED on-chain: ${action.frame.template} → ${action.frame.signature} (${action.frame.latencyMs}ms after trigger)`,
       });
     case 'dismissRuleFire':
       return { ...state, pendingRuleFire: null };
