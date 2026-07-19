@@ -312,22 +312,55 @@ const STEPS = [
   },
 ];
 
-/** First-run hero: what the terminal does, in the product's own mechanics — shown until live data arrives. */
-export function OnboardingCard({ className }: { className?: string }) {
+/**
+ * Full-height empty state for the terminal before any market/position data —
+ * a focused hero (not a column of empty skeleton cards). It also reassures the
+ * feed is alive and simply awaiting kickoff, so "nothing on screen" never reads
+ * as "broken".
+ */
+export function TerminalEmptyState({
+  connected,
+  streaming,
+  watching,
+  cluster,
+}: {
+  connected: boolean;
+  streaming: boolean;
+  watching: number;
+  cluster: string;
+}) {
+  const status = !connected
+    ? { dot: 'bg-outline', pulse: 'animate-pulse', text: 'Connecting to the pricing server…' }
+    : streaming
+      ? { dot: 'bg-positive', pulse: '', text: 'TxLINE odds streaming — markets loading' }
+      : watching > 0
+        ? { dot: 'bg-positive', pulse: 'animate-pulse', text: `Feed connected · ${watching} fixture${watching === 1 ? '' : 's'} subscribed · awaiting kickoff` }
+        : { dot: 'bg-primary', pulse: '', text: 'Feed connected · add a fixture id above to start pricing a match' };
+
   return (
-    <div className={`rounded-xl border border-outline-variant bg-surface-container-lowest p-4 shadow-sm md:p-6 ${className ?? ''}`}>
-      <h3 className="text-title-md text-on-surface">Cash out mid-match, priced by consensus — not by a lagging chain</h3>
-      <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+    <div className="flex min-h-[460px] flex-col items-center justify-center rounded-xl border border-outline-variant bg-surface-container-lowest px-6 py-12 text-center shadow-sm md:px-10">
+      <span className="inline-flex items-center gap-2 rounded-full border border-outline-variant bg-surface-container-low px-3 py-1.5 text-label-sm text-on-surface-variant">
+        <span className={`h-2 w-2 rounded-full ${status.dot} ${status.pulse}`} />
+        {status.text}
+      </span>
+
+      <h2 className="mt-6 max-w-2xl text-balance text-headline-lg text-on-surface">Cash out mid-match, priced by consensus — not by a lagging chain</h2>
+      <p className="mt-3 max-w-xl text-body-lg text-on-surface-variant">
+        Zygos values your open prediction-market positions at the de-vigged consensus of many bookmakers, and locks in the edge before the on-chain price catches up.
+      </p>
+
+      <ol className="mt-8 grid w-full max-w-3xl grid-cols-1 gap-4 text-left md:grid-cols-3">
         {STEPS.map((step, i) => (
-          <div key={step.title} className="rounded-lg border border-surface-container-high bg-surface-container-low p-3">
-            <span className="flex h-7 w-7 items-center justify-center rounded-full bg-primary-fixed font-mono text-data-mono text-primary">{i + 1}</span>
-            <h4 className="mt-2 text-body-md font-semibold text-on-surface">{step.title}</h4>
-            <p className="mt-1 text-body-sm leading-4 text-outline">{step.body}</p>
-          </div>
+          <li key={step.title} className="rounded-lg border border-surface-container-high bg-surface-container-low p-4">
+            <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary-fixed font-mono text-data-mono font-semibold text-primary">{i + 1}</span>
+            <h4 className="mt-3 text-body-md font-semibold text-on-surface">{step.title}</h4>
+            <p className="mt-1 text-body-sm leading-5 text-outline">{step.body}</p>
+          </li>
         ))}
-      </div>
-      <p className="mt-4 text-label-sm text-outline">
-        Live markets appear automatically while the server is subscribed to TxLINE fixtures — or add a fixture id in the Match Feed.
+      </ol>
+
+      <p className="mt-8 font-mono text-label-sm text-outline">
+        {cluster} · non-custodial · you sign every transaction
       </p>
     </div>
   );

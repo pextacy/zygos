@@ -12,7 +12,7 @@ import { useHealth } from '../lib/useHealth';
 import { useZygosSocket } from '../lib/useZygosSocket';
 import { ActivityLog } from './ActivityLog';
 import { ArmedRulesPanel } from './ArmedRulesPanel';
-import { ConsensusChartCard, EventTickerCard, FeedMetricsCard, OnboardingCard } from './DashboardCards';
+import { ConsensusChartCard, EventTickerCard, FeedMetricsCard, TerminalEmptyState } from './DashboardCards';
 import { ExplainerPanel } from './ExplainerPanel';
 import { IconAnalytics, IconAutomation, IconPortfolio, IconSearch, IconTerminal } from './Icons';
 import { LockInModal } from './LockInModal';
@@ -262,39 +262,52 @@ export function Terminal() {
                       {state.consensus.size} markets · {positions.length} positions · {CLUSTER}
                     </span>
                   </div>
-                  {frames.length === 0 && positions.length === 0 && <OnboardingCard className="mb-6" />}
-                  <div className="mb-6">
-                    <ConsensusChartCard
-                      frames={frames}
-                      histories={state.history}
-                      selectedKey={selectedMarket}
-                      onSelect={setSelectedMarket}
-                      onExplain={setExplain}
-                    />
-                  </div>
-                  <PositionsTable
-                    positions={positions}
-                    feedStates={state.feedStates}
-                    walletConnected={wallet !== null}
-                    loading={loadingPositions}
-                    onRefresh={refreshPositions}
-                    onLockIn={(dto) => setLockTarget({ dto })}
-                    onArmRule={(dto) => setRuleTarget(dto)}
-                    onBindMarket={() => setView('analytics')}
-                  />
-                  <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
-                    <FeedMetricsCard
+                  {frames.length === 0 && positions.length === 0 ? (
+                    // Nothing to price yet — a focused hero, not a stack of empty skeleton cards.
+                    <TerminalEmptyState
                       connected={state.connected}
-                      everConnected={state.everConnected}
-                      fixtures={state.feedStates.size}
-                      markets={state.consensus.size}
-                      eventsSeen={state.events.length}
+                      streaming={health?.feed.streaming ?? false}
+                      watching={state.feedStates.size}
                       cluster={CLUSTER}
-                      health={health}
-                      clockSkewMs={state.clockSkewMs}
                     />
-                    <EventTickerCard events={state.events} />
-                  </div>
+                  ) : (
+                    <>
+                      {frames.length > 0 && (
+                        <div className="mb-6">
+                          <ConsensusChartCard
+                            frames={frames}
+                            histories={state.history}
+                            selectedKey={selectedMarket}
+                            onSelect={setSelectedMarket}
+                            onExplain={setExplain}
+                          />
+                        </div>
+                      )}
+                      <PositionsTable
+                        positions={positions}
+                        feedStates={state.feedStates}
+                        walletConnected={wallet !== null}
+                        loading={loadingPositions}
+                        onRefresh={refreshPositions}
+                        onLockIn={(dto) => setLockTarget({ dto })}
+                        onArmRule={(dto) => setRuleTarget(dto)}
+                        onBindMarket={() => setView('analytics')}
+                      />
+                      <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
+                        <FeedMetricsCard
+                          connected={state.connected}
+                          everConnected={state.everConnected}
+                          fixtures={state.feedStates.size}
+                          markets={state.consensus.size}
+                          eventsSeen={state.events.length}
+                          cluster={CLUSTER}
+                          health={health}
+                          clockSkewMs={state.clockSkewMs}
+                        />
+                        <EventTickerCard events={state.events} />
+                      </div>
+                    </>
+                  )}
                 </div>
               </section>
 
