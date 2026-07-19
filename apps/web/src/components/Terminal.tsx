@@ -14,7 +14,7 @@ import { ActivityLog } from './ActivityLog';
 import { ArmedRulesPanel } from './ArmedRulesPanel';
 import { ConsensusChartCard, EventTickerCard, FeedMetricsCard, OnboardingCard } from './DashboardCards';
 import { ExplainerPanel } from './ExplainerPanel';
-import { IconAnalytics, IconAutomation, IconPortfolio, IconTerminal } from './Icons';
+import { IconAnalytics, IconAutomation, IconPortfolio, IconSearch, IconTerminal } from './Icons';
 import { LockInModal } from './LockInModal';
 import { MatchBoard } from './MatchBoard';
 import { PositionsTable } from './PositionsTable';
@@ -36,7 +36,17 @@ export function Terminal() {
   const { publicKey } = useWallet();
   const wallet = publicKey?.toBase58() ?? null;
   const [state, dispatch] = useReducer(reducer, initialState);
-  const [view, setView] = useState<View>('terminal');
+  const [view, setViewRaw] = useState<View>('terminal');
+  // Deep-link the active view via the URL hash (#portfolio, #automation, …) so
+  // views are shareable and reloads keep their place.
+  useEffect(() => {
+    const fromHash = window.location.hash.replace('#', '');
+    if (fromHash === 'portfolio' || fromHash === 'automation' || fromHash === 'analytics' || fromHash === 'terminal') setViewRaw(fromHash);
+  }, []);
+  const setView = useCallback((v: View) => {
+    setViewRaw(v);
+    if (typeof window !== 'undefined') window.location.hash = v;
+  }, []);
   const [watched, setWatched] = useState<string[]>([]);
   const [selectedMarket, setSelectedMarket] = useState<string | null>(null);
   const [explain, setExplain] = useState<ConsensusFrame | null>(null);
@@ -46,6 +56,7 @@ export function Terminal() {
   const [loadingPositions, setLoadingPositions] = useState(false);
   const [rulesRefresh, setRulesRefresh] = useState(0);
   const [locksRefresh, setLocksRefresh] = useState(0);
+  const [headerSearch, setHeaderSearch] = useState('');
 
   useZygosSocket(dispatch, wallet, watched);
   const health = useHealth();
@@ -124,55 +135,67 @@ export function Terminal() {
   );
 
   return (
-    <div className="flex h-screen flex-col">
+    <div className="flex h-screen flex-col bg-background">
       {/* Top nav bar */}
-      <header className="sticky top-0 z-30 border-b border-outline-variant bg-surface px-4 md:px-6">
-        <div className="flex h-14 items-center justify-between gap-3 md:h-16">
-          <div className="flex min-w-0 items-center gap-6">
-            <div className="whitespace-nowrap font-mono text-lg font-bold tracking-tight text-on-surface md:text-xl">
-              ZYGOS<span className="text-primary">//</span><span className="font-normal tracking-[0.2em] text-on-surface-variant">TERMINAL</span>
-            </div>
-            {/* Single desktop nav band (md→lg); the icon rail takes over at lg. */}
-            <nav className="hidden h-full items-center gap-4 font-mono text-data-mono md:flex lg:hidden">
-              {NAV.map((item) => navLink(item, 'flex h-16 items-center px-2 pt-1'))}
+      <header className="sticky top-0 z-30 border-b border-outline-variant bg-surface-container-lowest px-4 md:px-6">
+        <div className="flex h-14 items-center justify-between gap-4 md:h-16">
+          <div className="flex min-w-0 items-center gap-8">
+            <div className="whitespace-nowrap font-mono text-lg font-bold tracking-tight text-primary md:text-xl">ZYGOS_TERMINAL</div>
+            <nav className="hidden h-full items-center gap-1 md:flex">
+              {NAV.map((item) => navLink(item, 'flex h-16 items-center px-3 text-body-md font-medium'))}
             </nav>
           </div>
           <div className="flex items-center gap-3">
+            <form
+              className="hidden items-center lg:flex"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (headerSearch.trim()) onWatch(headerSearch.trim());
+                setHeaderSearch('');
+              }}
+            >
+              <div className="flex items-center gap-2 rounded-lg border border-outline-variant bg-surface-container-low px-3 py-2 focus-within:border-primary">
+                <IconSearch className="h-4 w-4 text-outline" />
+                <input
+                  value={headerSearch}
+                  onChange={(e) => setHeaderSearch(e.target.value)}
+                  placeholder="Watch fixture id…"
+                  className="w-44 bg-transparent font-mono text-body-sm text-on-surface placeholder:text-outline focus:outline-none"
+                  aria-label="Watch fixture id"
+                />
+              </div>
+            </form>
             <span
-              className={`flex items-center gap-1.5 whitespace-nowrap font-mono text-label-caps uppercase ${state.connected ? 'text-primary' : 'text-error'}`}
+              className={`flex items-center gap-1.5 whitespace-nowrap text-label-sm ${state.connected ? 'text-positive' : 'text-error'}`}
               title={state.connected ? 'Server link live' : 'Server link offline'}
             >
-              <span className={`h-1.5 w-1.5 rounded-full ${state.connected ? 'bg-primary shadow-glow-live' : 'bg-error shadow-glow-stale'}`} />
+              <span className={`h-2 w-2 rounded-full ${state.connected ? 'bg-positive' : 'bg-error'}`} />
               <span className="hidden sm:inline">{state.connected ? 'Live' : 'Offline'}</span>
             </span>
             <WalletMultiButton />
           </div>
         </div>
-        <nav className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 pb-2 font-mono text-data-mono md:hidden">
-          {NAV.map((item) => navLink(item, 'whitespace-nowrap rounded px-2 py-1'))}
+        <nav className="no-scrollbar -mx-4 flex gap-2 overflow-x-auto px-4 pb-2 md:hidden">
+          {NAV.map((item) => navLink(item, 'whitespace-nowrap rounded px-3 py-1.5 text-body-sm font-medium'))}
         </nav>
       </header>
-      {/* Feed-truth bar: cyan when the server link is live, rose when not. */}
-      <div className="feed-pulse" data-live={state.connected} aria-hidden />
 
       <div className="flex min-h-0 flex-1">
         {/* Operations sidebar */}
-        <aside className="hidden w-52 flex-shrink-0 flex-col border-r border-outline-variant bg-surface py-4 lg:flex">
-          <div className="mb-6 px-5">
-            <h2 className="font-mono text-label-caps uppercase tracking-[0.2em] text-outline">Operations</h2>
+        <aside className="hidden w-56 flex-shrink-0 flex-col border-r border-outline-variant bg-surface py-6 lg:flex">
+          <div className="mb-6 px-6">
+            <h2 className="text-headline-sm text-on-surface">OPERATIONS</h2>
             <p className="mt-1 font-mono text-label-sm text-outline">v{pkg.version}</p>
           </div>
-          <nav className="flex flex-1 flex-col gap-1 pr-3">
+          <nav className="flex flex-1 flex-col gap-1 px-3">
             {NAV.map((item) => {
               const active = view === item.id;
               return (
                 <button
                   key={item.id}
                   onClick={() => setView(item.id)}
-                  className={`flex items-center gap-3 rounded-r-full px-5 py-2.5 text-left text-label-caps uppercase transition-colors ${
-                    active
-                      ? 'border-l-4 border-secondary bg-secondary-container pl-4 text-on-secondary-container'
-                      : 'text-outline hover:bg-surface-container-high hover:text-on-surface-variant'
+                  className={`flex items-center gap-3 rounded-lg px-3 py-2.5 text-left text-body-md transition-colors ${
+                    active ? 'bg-primary-fixed font-medium text-primary' : 'text-on-surface-variant hover:bg-surface-container-high hover:text-on-surface'
                   }`}
                 >
                   <item.icon className="h-5 w-5" />
@@ -181,16 +204,16 @@ export function Terminal() {
               );
             })}
           </nav>
-          <div className="mt-auto px-5">
+          <div className="mt-auto px-6">
             <button
               onClick={() => quickTarget && setLockTarget({ dto: quickTarget })}
               disabled={!quickTarget}
               title={quickTarget ? `Lock In ${quickTarget.position.fixtureId} · ${quickTarget.position.outcome}` : 'No lockable position'}
-              className="mb-4 w-full rounded-lg border border-outline-variant bg-surface px-4 py-2 font-mono text-data-mono text-secondary shadow-float transition-colors enabled:hover:bg-surface-container-high disabled:opacity-40"
+              className="mb-5 w-full rounded-lg border border-outline-variant bg-surface-container-lowest px-4 py-2.5 text-body-md font-medium text-on-surface shadow-card transition-colors enabled:hover:bg-surface-container-high disabled:opacity-40"
             >
               Quick Execute
             </button>
-            <div className="flex flex-col gap-1.5 border-t border-outline-variant pt-4 text-label-caps uppercase text-outline">
+            <div className="flex flex-col gap-2 border-t border-outline-variant pt-4 text-label-sm text-outline">
               <span>Cluster · {CLUSTER}</span>
               <span>Feed · TxLINE</span>
               <span>Non-custodial</span>
@@ -212,12 +235,14 @@ export function Terminal() {
               />
 
               <section className="flex-1 md:overflow-y-auto">
-                <div className="w-full p-4 md:p-5">
-                  <div className="mb-4 flex items-baseline justify-between">
-                    <span className="font-mono text-label-caps uppercase tracking-[0.2em] text-outline">Live desk · {CLUSTER}</span>
-                    <span className="font-mono text-label-sm text-outline">{state.consensus.size} markets · {positions.length} positions</span>
+                <div className="w-full p-6 md:p-8">
+                  <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+                    <h1 className="text-headline-lg text-on-surface">Terminal Dashboard</h1>
+                    <span className="font-mono text-label-sm text-outline">
+                      {state.consensus.size} markets · {positions.length} positions · {CLUSTER}
+                    </span>
                   </div>
-                  <div className="grid grid-cols-1 gap-4 2xl:grid-cols-2">
+                  <div className="grid grid-cols-1 gap-6 2xl:grid-cols-2">
                     {frames.length === 0 && positions.length === 0 && <OnboardingCard className="2xl:col-span-2" />}
                     <ConsensusChartCard
                       frames={frames}

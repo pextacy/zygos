@@ -66,3 +66,12 @@ export function IconRefresh({ className }: { className?: string }) {
     </Svg>
   );
 }
+
+export function IconSearch({ className }: { className?: string }) {
+  return (
+    <Svg className={className}>
+      <circle cx="11" cy="11" r="7" />
+      <path d="M21 21l-4.3-4.3" />
+    </Svg>
+  );
+}

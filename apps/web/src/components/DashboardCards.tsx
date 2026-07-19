@@ -5,13 +5,13 @@ import type { HistoryPoint } from '../lib/store';
 import type { ConsensusFrame, HealthDto, MatchEventDto, OutcomeKey } from '../lib/types';
 import { TxBadge } from './TxBadge';
 
-/** Outcome line colors (Ink Terminal): home/over cyan, draw slate, away/under violet — three hues, none the risk-rose. */
+/** Outcome line colors: home/over indigo, draw slate, away/under red (design tokens). */
 export const OUTCOME_COLOR: Record<string, string> = {
-  HOME: '#22d3ee',
-  OVER: '#22d3ee',
-  DRAW: '#93a1af',
-  AWAY: '#b48ef2',
-  UNDER: '#b48ef2',
+  HOME: '#2a14b4',
+  OVER: '#2a14b4',
+  DRAW: '#565e74',
+  AWAY: '#ba1a1a',
+  UNDER: '#ba1a1a',
 };
 
 /** Probability change (in percentage points) between the last two observed samples. */
@@ -43,7 +43,7 @@ function ProbabilityTimeline({ history }: { history: HistoryPoint[] }) {
   return (
     <svg viewBox="0 0 100 48" preserveAspectRatio="none" className="h-48 w-full" role="img" aria-label="Consensus probability timeline">
       {[12, 24, 36].map((y) => (
-        <line key={y} x1="0" y1={y} x2="100" y2={y} stroke="#222c37" strokeWidth="1" vectorEffect="non-scaling-stroke" />
+        <line key={y} x1="0" y1={y} x2="100" y2={y} stroke="#e0e3e5" strokeWidth="1" vectorEffect="non-scaling-stroke" />
       ))}
       {outcomes.map((outcome) => {
         const points = history
@@ -55,7 +55,7 @@ function ProbabilityTimeline({ history }: { history: HistoryPoint[] }) {
             key={outcome}
             points={points}
             fill="none"
-            stroke={OUTCOME_COLOR[outcome] ?? '#93a1af'}
+            stroke={OUTCOME_COLOR[outcome] ?? '#565e74'}
             strokeWidth="1.5"
             vectorEffect="non-scaling-stroke"
             strokeLinejoin="round"
@@ -137,7 +137,7 @@ export function ConsensusChartCard({
                 <div className="flex flex-wrap gap-x-4 gap-y-1">
                   {Object.entries(selected.probs).map(([outcome, p]) => (
                     <span key={outcome} className="flex items-center gap-1.5 font-mono text-data-mono text-on-surface">
-                      <span className="h-2 w-2 rounded-full" style={{ backgroundColor: OUTCOME_COLOR[outcome] ?? '#93a1af' }} />
+                      <span className="h-2 w-2 rounded-full" style={{ backgroundColor: OUTCOME_COLOR[outcome] ?? '#565e74' }} />
                       {outcome} {pct(p, 1)}
                       <MoveArrow pts={lastMovePts(history, outcome)} />
                     </span>

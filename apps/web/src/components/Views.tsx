@@ -49,7 +49,7 @@ export function PortfolioView({
   const lagPositive = BigInt(totalLag) >= 0n;
   const valued = positions.filter((p) => p.valuation !== null);
 
-  const ALLOC_COLORS = ['#22d3ee', '#38bdf8', '#f5b53f', '#b48ef2', '#6ee7d3', '#93a1af'];
+  const ALLOC_COLORS = ['#2a14b4', '#4338ca', '#c3c0ff', '#565e74', '#bec6e0', '#e3dfff'];
 
   return (
     <div className="mx-auto w-full max-w-5xl p-4 md:p-6">

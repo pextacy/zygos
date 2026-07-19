@@ -4,41 +4,18 @@
 
 body {
   @apply bg-background font-sans text-body-md text-on-background antialiased;
-  /* Faint terminal grid — atmosphere only, never competes with data. */
-  background-image:
-    linear-gradient(rgba(255, 255, 255, 0.014) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.014) 1px, transparent 1px);
-  background-size: 34px 34px;
-  background-position: center top;
 }
 
-/* Cyan focus halo — the terminal's live signal color, on every interactive. */
+/* Focus halo (DESIGN.md components): indigo border + 20% primary ring. */
 input:focus-visible,
 button:focus-visible,
 a:focus-visible,
 select:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.45);
+  box-shadow: 0 0 0 2px rgba(67, 56, 202, 0.2);
 }
 
-/* Feed-truth bar: the chrome breathes with data freshness (product's core
-   honesty rule made visible). Cyan when the feed is live, rose when not. */
-.feed-pulse {
-  height: 2px;
-  transition:
-    background-color 300ms ease,
-    box-shadow 300ms ease;
-}
-.feed-pulse[data-live='true'] {
-  background: linear-gradient(90deg, transparent, #22d3ee 20%, #22d3ee 80%, transparent);
-  box-shadow: 0 0 14px -1px rgba(34, 211, 238, 0.55);
-}
-.feed-pulse[data-live='false'] {
-  background: linear-gradient(90deg, transparent, #ff7a86 30%, #ff7a86 70%, transparent);
-  box-shadow: 0 0 14px -1px rgba(255, 122, 134, 0.45);
-}
-
-/* Thin, ink-toned scrollbars — present but recessive, terminal-appropriate. */
+/* Thin, unobtrusive scrollbars in feed columns. */
 .no-scrollbar::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -47,39 +24,29 @@ select:focus-visible {
   background: transparent;
 }
 .no-scrollbar::-webkit-scrollbar-thumb {
-  background: #222c37;
+  background: #c7c4d7;
   border-radius: 9999px;
-}
-.no-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: #2f3c49;
 }
 .no-scrollbar {
   scrollbar-width: thin;
-  scrollbar-color: #222c37 transparent;
+  scrollbar-color: #c7c4d7 transparent;
 }
 
-/* Wallet-adapter button, restyled to the cyan primary. */
+/* Wallet-adapter button, restyled to the design's primary button. */
 .wallet-adapter-button.wallet-adapter-button-trigger {
-  background: #22d3ee;
-  color: #042028;
+  background: #2a14b4;
+  color: #ffffff;
   font-family: 'JetBrains Mono', ui-monospace, monospace;
   font-size: 13px;
   font-weight: 600;
-  letter-spacing: 0.02em;
   line-height: 20px;
   height: 40px;
   padding: 0 16px;
-  border-radius: 0.25rem;
-  transition:
-    background-color 150ms ease,
-    box-shadow 150ms ease;
+  border-radius: 0.5rem;
+  transition: background-color 150ms ease;
 }
 .wallet-adapter-button.wallet-adapter-button-trigger:not([disabled]):hover {
-  background: #67e3f4;
-  box-shadow: 0 0 16px -2px rgba(34, 211, 238, 0.55);
-}
-.wallet-adapter-modal-wrapper {
-  background: #10161e !important;
+  background: #4338ca;
 }
 
 @media (prefers-reduced-motion: reduce) {

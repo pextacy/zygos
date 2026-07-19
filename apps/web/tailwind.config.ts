@@ -1,58 +1,71 @@
 import type { Config } from 'tailwindcss';
 
 /**
- * "Ink Terminal" design system. A live probability-trading terminal, not a
- * light SaaS dashboard. Two temperatures carry meaning: cyan = live market
- * truth flowing in (feed, consensus, brand); amber-gold = value/edge you
- * capture (lock-in, money); rose = risk / stale / offline. Deep desaturated
- * blue-ink surfaces (never pure black), warm-cool off-white text, crisp radii,
- * mono-forward chrome. Token NAMES are unchanged so every component re-skins
- * from these values alone.
+ * "Modern Professional Fintech" design system — mirrors the Stitch export
+ * (docs: stitch_zygos_terminal/.../DESIGN.md) 1:1. Light slate surfaces,
+ * deep-indigo primary, Geist + JetBrains Mono, tonal depth via 1px slate
+ * borders (no resting shadows). Token names are consumed across every
+ * component, so the whole app is themed from these values.
  */
 const config: Config = {
   content: ['./src/**/*.{ts,tsx}'],
   theme: {
     extend: {
       colors: {
-        // ink surface stack — each step a hair lighter to signal elevation on dark
-        background: '#0a0e13',
-        'on-background': '#e6edf3',
-        surface: '#0a0e13',
-        'surface-dim': '#06090d',
-        'surface-variant': '#1a222b',
-        'surface-container-lowest': '#0d1219',
-        'surface-container-low': '#10161e',
-        'surface-container': '#141c25',
-        'surface-container-high': '#1a232d',
-        'surface-container-highest': '#212c37',
-        'on-surface': '#e6edf3',
-        'on-surface-variant': '#93a1af',
-        outline: '#55636f',
-        'outline-variant': '#222c37',
-        // primary = cyan: live signal, consensus, brand
-        primary: '#22d3ee',
-        'on-primary': '#042028',
-        'primary-container': '#0a3a45',
-        'on-primary-container': '#a9eef7',
-        'primary-fixed': '#0e2830',
-        'primary-fixed-dim': '#17505c',
-        // secondary = amber-gold: edge, captured value, actionable warmth
-        secondary: '#f5b53f',
-        'on-secondary': '#241a00',
-        'secondary-container': '#3a2b00',
-        'on-secondary-container': '#ffdf9e',
-        tertiary: '#0a0e13',
-        'tertiary-container': '#2b3b50',
-        // error = rose: risk, stale, offline (never fire-engine red)
-        error: '#ff7a86',
-        'on-error': '#2a0709',
-        'error-container': '#3a1316',
-        'on-error-container': '#ffc9cd',
+        background: '#f7f9fb',
+        'on-background': '#191c1e',
+        surface: '#f7f9fb',
+        'surface-dim': '#d8dadc',
+        'surface-bright': '#f7f9fb',
+        'surface-variant': '#e0e3e5',
+        'surface-container-lowest': '#ffffff',
+        'surface-container-low': '#f2f4f6',
+        'surface-container': '#eceef0',
+        'surface-container-high': '#e6e8ea',
+        'surface-container-highest': '#e0e3e5',
+        'on-surface': '#191c1e',
+        'on-surface-variant': '#464554',
+        'inverse-surface': '#2d3133',
+        'inverse-on-surface': '#eff1f3',
+        outline: '#777586',
+        'outline-variant': '#c7c4d7',
+        'surface-tint': '#5148d7',
+        primary: '#2a14b4',
+        'on-primary': '#ffffff',
+        'primary-container': '#4338ca',
+        'on-primary-container': '#c1beff',
+        'inverse-primary': '#c3c0ff',
+        'primary-fixed': '#e3dfff',
+        'primary-fixed-dim': '#c3c0ff',
+        'on-primary-fixed': '#100069',
+        'on-primary-fixed-variant': '#372abf',
+        secondary: '#565e74',
+        'on-secondary': '#ffffff',
+        'secondary-container': '#dae2fd',
+        'on-secondary-container': '#5c647a',
+        'secondary-fixed': '#dae2fd',
+        'secondary-fixed-dim': '#bec6e0',
+        'on-secondary-fixed': '#131b2e',
+        'on-secondary-fixed-variant': '#3f465c',
+        tertiary: '#2b3b50',
+        'on-tertiary': '#ffffff',
+        'tertiary-container': '#425268',
+        'on-tertiary-container': '#b5c5df',
+        error: '#ba1a1a',
+        'on-error': '#ffffff',
+        'error-container': '#ffdad6',
+        'on-error-container': '#93000a',
+        // positive/negative market movement (DESIGN.md: green growth, red loss)
+        positive: '#0f9d58',
+        'positive-container': '#e2f5ec',
       },
       borderRadius: {
-        DEFAULT: '0.25rem',
-        lg: '0.5rem',
-        xl: '0.75rem',
+        sm: '0.25rem',
+        DEFAULT: '0.5rem',
+        md: '0.75rem',
+        lg: '1rem',
+        xl: '1.5rem',
+        full: '9999px',
       },
       fontFamily: {
         sans: ['var(--font-geist)', 'system-ui', 'sans-serif'],
@@ -72,12 +85,9 @@ const config: Config = {
         'label-caps': ['12px', { lineHeight: '16px', letterSpacing: '0.1em', fontWeight: '600' }],
       },
       boxShadow: {
-        // On ink, elevation reads through a faint top-highlight + deep drop,
-        // not a soft gray blur (which would vanish against dark surfaces).
-        float: 'inset 0 1px 0 0 rgba(255,255,255,0.04), 0 10px 30px -8px rgba(0,0,0,0.6)',
-        card: 'inset 0 1px 0 0 rgba(255,255,255,0.03), 0 6px 18px -10px rgba(0,0,0,0.5)',
-        'glow-live': '0 0 16px -2px rgba(34,211,238,0.55)',
-        'glow-stale': '0 0 16px -2px rgba(255,122,134,0.5)',
+        // Depth only on floating elements (dropdowns, modals) per DESIGN.md.
+        float: '0px 4px 12px rgba(15, 23, 42, 0.08)',
+        card: '0px 1px 2px rgba(15, 23, 42, 0.04)',
       },
     },
   },
