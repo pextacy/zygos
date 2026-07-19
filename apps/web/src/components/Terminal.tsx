@@ -126,21 +126,24 @@ export function Terminal() {
   return (
     <div className="flex h-screen flex-col">
       {/* Top nav bar */}
-      <header className="sticky top-0 z-30 border-b border-outline-variant bg-background px-4 md:px-6">
+      <header className="sticky top-0 z-30 border-b border-outline-variant bg-surface px-4 md:px-6">
         <div className="flex h-14 items-center justify-between gap-3 md:h-16">
           <div className="flex min-w-0 items-center gap-6">
-            <div className="whitespace-nowrap text-lg font-bold tracking-tighter text-primary md:text-headline-md">ZYGOS_TERMINAL</div>
-            <nav className="hidden h-full items-center gap-4 font-mono text-data-mono md:flex">
+            <div className="whitespace-nowrap font-mono text-lg font-bold tracking-tight text-on-surface md:text-xl">
+              ZYGOS<span className="text-primary">//</span><span className="font-normal tracking-[0.2em] text-on-surface-variant">TERMINAL</span>
+            </div>
+            {/* Single desktop nav band (md→lg); the icon rail takes over at lg. */}
+            <nav className="hidden h-full items-center gap-4 font-mono text-data-mono md:flex lg:hidden">
               {NAV.map((item) => navLink(item, 'flex h-16 items-center px-2 pt-1'))}
             </nav>
           </div>
           <div className="flex items-center gap-3">
             <span
-              className={`whitespace-nowrap font-mono text-label-sm ${state.connected ? 'text-primary' : 'text-error'}`}
+              className={`flex items-center gap-1.5 whitespace-nowrap font-mono text-label-caps uppercase ${state.connected ? 'text-primary' : 'text-error'}`}
               title={state.connected ? 'Server link live' : 'Server link offline'}
             >
-              <span className="sm:hidden">{state.connected ? '●' : '○'}</span>
-              <span className="hidden sm:inline">{state.connected ? '● LIVE' : '○ OFFLINE'}</span>
+              <span className={`h-1.5 w-1.5 rounded-full ${state.connected ? 'bg-primary shadow-glow-live' : 'bg-error shadow-glow-stale'}`} />
+              <span className="hidden sm:inline">{state.connected ? 'Live' : 'Offline'}</span>
             </span>
             <WalletMultiButton />
           </div>
@@ -149,13 +152,15 @@ export function Terminal() {
           {NAV.map((item) => navLink(item, 'whitespace-nowrap rounded px-2 py-1'))}
         </nav>
       </header>
+      {/* Feed-truth bar: cyan when the server link is live, rose when not. */}
+      <div className="feed-pulse" data-live={state.connected} aria-hidden />
 
       <div className="flex min-h-0 flex-1">
         {/* Operations sidebar */}
-        <aside className="hidden w-56 flex-shrink-0 flex-col border-r border-outline-variant bg-surface-container-low py-4 lg:flex">
+        <aside className="hidden w-52 flex-shrink-0 flex-col border-r border-outline-variant bg-surface py-4 lg:flex">
           <div className="mb-6 px-5">
-            <h2 className="text-headline-sm text-on-surface">OPERATIONS</h2>
-            <p className="mt-1 text-label-sm text-outline">v{pkg.version}</p>
+            <h2 className="font-mono text-label-caps uppercase tracking-[0.2em] text-outline">Operations</h2>
+            <p className="mt-1 font-mono text-label-sm text-outline">v{pkg.version}</p>
           </div>
           <nav className="flex flex-1 flex-col gap-1 pr-3">
             {NAV.map((item) => {
@@ -207,17 +212,20 @@ export function Terminal() {
               />
 
               <section className="flex-1 md:overflow-y-auto">
-                <div className="mx-auto max-w-4xl p-4 md:p-6">
-                  <h1 className="mb-6 text-headline-lg text-on-surface">Terminal Dashboard</h1>
-                  <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-                    {frames.length === 0 && positions.length === 0 && <OnboardingCard className="lg:col-span-2" />}
+                <div className="w-full p-4 md:p-5">
+                  <div className="mb-4 flex items-baseline justify-between">
+                    <span className="font-mono text-label-caps uppercase tracking-[0.2em] text-outline">Live desk · {CLUSTER}</span>
+                    <span className="font-mono text-label-sm text-outline">{state.consensus.size} markets · {positions.length} positions</span>
+                  </div>
+                  <div className="grid grid-cols-1 gap-4 2xl:grid-cols-2">
+                    {frames.length === 0 && positions.length === 0 && <OnboardingCard className="2xl:col-span-2" />}
                     <ConsensusChartCard
                       frames={frames}
                       histories={state.history}
                       selectedKey={selectedMarket}
                       onSelect={setSelectedMarket}
                       onExplain={setExplain}
-                      className="lg:col-span-2"
+                      className="2xl:col-span-2"
                     />
                     <PositionsTable
                       positions={positions}
@@ -228,7 +236,7 @@ export function Terminal() {
                       onLockIn={(dto) => setLockTarget({ dto })}
                       onArmRule={(dto) => setRuleTarget(dto)}
                       onBindMarket={() => setView('analytics')}
-                      className="lg:col-span-2"
+                      className="2xl:col-span-2"
                     />
                     <FeedMetricsCard
                       connected={state.connected}
