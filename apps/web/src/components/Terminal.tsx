@@ -231,7 +231,6 @@ export function Terminal() {
                 feedStates={state.feedStates}
                 selectedKey={selectedMarket}
                 onSelect={setSelectedMarket}
-                onWatch={onWatch}
               />
 
               <section className="flex-1 md:overflow-y-auto">
@@ -242,27 +241,27 @@ export function Terminal() {
                       {state.consensus.size} markets · {positions.length} positions · {CLUSTER}
                     </span>
                   </div>
-                  <div className="grid grid-cols-1 gap-6 2xl:grid-cols-2">
-                    {frames.length === 0 && positions.length === 0 && <OnboardingCard className="2xl:col-span-2" />}
+                  {frames.length === 0 && positions.length === 0 && <OnboardingCard className="mb-6" />}
+                  <div className="mb-6">
                     <ConsensusChartCard
                       frames={frames}
                       histories={state.history}
                       selectedKey={selectedMarket}
                       onSelect={setSelectedMarket}
                       onExplain={setExplain}
-                      className="2xl:col-span-2"
                     />
-                    <PositionsTable
-                      positions={positions}
-                      feedStates={state.feedStates}
-                      walletConnected={wallet !== null}
-                      loading={loadingPositions}
-                      onRefresh={refreshPositions}
-                      onLockIn={(dto) => setLockTarget({ dto })}
-                      onArmRule={(dto) => setRuleTarget(dto)}
-                      onBindMarket={() => setView('analytics')}
-                      className="2xl:col-span-2"
-                    />
+                  </div>
+                  <PositionsTable
+                    positions={positions}
+                    feedStates={state.feedStates}
+                    walletConnected={wallet !== null}
+                    loading={loadingPositions}
+                    onRefresh={refreshPositions}
+                    onLockIn={(dto) => setLockTarget({ dto })}
+                    onArmRule={(dto) => setRuleTarget(dto)}
+                    onBindMarket={() => setView('analytics')}
+                  />
+                  <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-2">
                     <FeedMetricsCard
                       connected={state.connected}
                       fixtures={state.feedStates.size}
@@ -277,9 +276,28 @@ export function Terminal() {
                 </div>
               </section>
 
-              <section className="flex w-full flex-shrink-0 flex-col border-t border-outline-variant bg-surface md:w-72 md:border-l md:border-t-0">
-                <ArmedRulesPanel wallet={wallet} refreshKey={rulesKey} onLog={onLog} />
-                <ActivityLog entries={state.activity} />
+              <section className="flex w-full flex-shrink-0 flex-col border-t border-outline-variant bg-surface md:w-80 md:border-l md:border-t-0">
+                <div className="min-h-0 flex-1 overflow-y-auto">
+                  <ArmedRulesPanel wallet={wallet} refreshKey={rulesKey} onLog={onLog} />
+                  <ActivityLog entries={state.activity} />
+                </div>
+                {/* New Trigger composer (per the Stitch Quick Rules rail): jump into arming on the best lockable position. */}
+                <div className="flex-shrink-0 border-t border-outline-variant p-4">
+                  <label className="text-label-caps uppercase text-outline">New Trigger</label>
+                  <button
+                    onClick={() => (quickTarget ? setRuleTarget(quickTarget) : setView('portfolio'))}
+                    className="mt-2 flex w-full items-center justify-between rounded-lg border border-outline-variant bg-surface-container-lowest px-3 py-2.5 text-left font-mono text-body-sm text-outline transition-colors hover:border-primary"
+                  >
+                    {quickTarget ? `${quickTarget.position.fixtureId} · ${quickTarget.position.outcome}` : 'Condition (e.g. HOME ≥ 70%)'}
+                  </button>
+                  <button
+                    onClick={() => (quickTarget ? setRuleTarget(quickTarget) : setView('portfolio'))}
+                    disabled={!quickTarget}
+                    className="mt-2 w-full rounded-lg bg-primary py-2.5 text-body-md font-medium text-on-primary transition-colors enabled:hover:bg-primary-container disabled:opacity-40"
+                  >
+                    Deploy Rule
+                  </button>
+                </div>
               </section>
             </div>
           )}
