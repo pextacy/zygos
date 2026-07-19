@@ -27,9 +27,44 @@ const app = Fastify({
   },
 });
 
-// Browser clients live on another origin in production (Vercel web → Fly API).
+// Browser clients live on another origin in production (Vercel web → Render API).
+// The allowlist is normalized (trailing slashes stripped, lowercased) and, for
+// each configured host, all its Vercel preview/deployment subdomains are
+// accepted too — otherwise a per-deploy URL like
+// zygos-abc123-team.vercel.app is silently CORS-blocked while the canonical
+// alias works, surfacing in the browser only as "Failed to fetch".
+const normalizeOrigin = (o: string): string => o.trim().replace(/\/+$/, '').toLowerCase();
+/** Vercel project slug from a *.vercel.app host (`zygos-abc123-team` → `zygos`), else null. */
+const vercelProjectOf = (host: string): string | null =>
+  host.endsWith('.vercel.app') ? (host.replace(/\.vercel\.app$/, '').split('-')[0] ?? null) : null;
+const allowedOrigins = env.WEB_ORIGIN ? env.WEB_ORIGIN.split(',').map(normalizeOrigin).filter(Boolean) : null;
+const vercelProjectHosts = new Set(
+  (allowedOrigins ?? [])
+    .map((o) => {
+      try {
+        return vercelProjectOf(new URL(o).hostname);
+      } catch {
+        return null;
+      }
+    })
+    .filter((h): h is string => h !== null),
+);
 await app.register(cors, {
-  origin: env.WEB_ORIGIN ? env.WEB_ORIGIN.split(',').map((o) => o.trim()) : true,
+  origin: (origin, cb) => {
+    // Non-browser callers (curl, server-to-server) send no Origin — always allow.
+    if (!origin || allowedOrigins === null) return cb(null, true);
+    const norm = normalizeOrigin(origin);
+    if (allowedOrigins.includes(norm)) return cb(null, true);
+    try {
+      const project = vercelProjectOf(new URL(norm).hostname);
+      if (project !== null && vercelProjectHosts.has(project)) {
+        return cb(null, true); // same Vercel project, different deploy/preview URL
+      }
+    } catch {
+      /* malformed origin: fall through to reject */
+    }
+    return cb(null, false);
+  },
 });
 
 const db = await openDb(env.DATABASE_URL);
